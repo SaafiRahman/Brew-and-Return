@@ -1,31 +1,35 @@
-import type { CallResult, Json } from '../game/types';
+import type { Json } from '../game/types';
 
 /**
  * Language-agnostic boundary between the game and player code.
- * The game only ever sends and receives plain JSON data through this interface,
- * so another language (e.g. JavaScript) can be added by implementing it.
+ * A spell runs top to bottom; each game command it calls (brew, serve, order…)
+ * is handed to the host, and the spell waits until the host has finished it.
+ * Only plain JSON crosses this boundary, so other languages can be added later.
  */
 export interface CodeRunner {
   readonly language: string;
-  /** Start the runtime. Resolves once code can be run. */
   init(): Promise<void>;
-  /** Load the player's code. Runs top-level statements and reports which concepts it uses. */
-  setCode(source: string): Promise<SetCodeResult>;
-  /** Call a function the player defined, e.g. call('serve', order). */
-  call(fn: string, arg: Json, timeoutMs?: number): Promise<CallResult>;
+  /** Run a spell to completion (or until stopped). */
+  run(source: string, host: ActionHost): Promise<RunOutcome>;
+  /** Ask a running spell to stop. The pending run() resolves with `stopped`. */
+  stop(): void;
   dispose(): void;
 }
 
-export type SetCodeResult =
-  | { ok: true; features: string[]; stdout: string }
-  | { ok: false; timeout?: false; errorType: string; message: string; line?: number; traceback: string; stdout: string }
-  | { ok: false; timeout: true };
-
-export interface RunnerEvents {
-  /** Loading progress for the loading screen. */
-  onStatus?(text: string): void;
-  /** The runtime had to be restarted (e.g. after an infinite loop). */
-  onRestart?(): void;
+export interface ActionHost {
+  /** The spell parsed fine; these concepts appear in it (for discovery bonuses). */
+  loaded?(features: string[]): void;
+  /** Carry out a game command. Resolve with its result, or reject the command with an error message. */
+  perform(action: string, args: Json[], line: number): Promise<ActionReply>;
 }
 
-export const DEFAULT_CALL_TIMEOUT_MS = 1000;
+export type ActionReply = { value: Json } | { error: string };
+
+export type RunOutcome =
+  | { kind: 'finished' }
+  | { kind: 'stopped' }
+  | { kind: 'error'; errorType: string; message: string; line?: number; traceback: string };
+
+export interface RunnerEvents {
+  onStatus?(text: string): void;
+}

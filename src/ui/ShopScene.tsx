@@ -1,104 +1,114 @@
-import { CHALKBOARD, KINDS, UPGRADES } from '../game/content';
-import { upgradeCost } from '../game/engine';
-import { chalkboardSymptoms } from '../game/progression';
-import type { Customer, UpgradeId } from '../game/types';
-import { useGame, type Controller } from '../app/controller';
-import { py } from './Rich';
+import { POTIONS, SHOP, WALK_TIME } from '../game/content';
+import { itemCost } from '../game/world';
+import type { Customer, PageId, PotionId } from '../game/types';
+import { useWorld, type Controller } from '../app/controller';
 
 export function ShopScene({ ctl }: { ctl: Controller }) {
-  const s = useGame(ctl);
-  const counter = ctl.counter.value;
-  const [front, ...waiting] = s.queue;
-  const symptoms = chalkboardSymptoms(s);
-  const reacting = counter?.phase === 'reacting' ? counter : null;
+  const w = useWorld(ctl);
+  const a = w.apprentice;
+  const [front, ...waiting] = w.queue;
+  const walkSeconds = WALK_TIME / w.speed;
 
   return (
     <section class="shop" aria-label="Your potion shop">
       <div class="scene">
         <div class="wall">
-          <div class="shelf">
-            <span>🧪</span><span>⚗️</span><span>🍯</span><span>🌿</span><span>🧪</span><span>🕯️</span>
+          <div class="shelf" aria-hidden="true">
+            <span>🧪</span>
+            <span>🍯</span>
+            <span>🌿</span>
+            <span>🕯️</span>
+            <span>📜</span>
           </div>
-          <div class={`sign-board ${s.open ? 'is-open' : ''}`}>{s.open ? 'Open' : 'Closed'}</div>
-          {symptoms.length > 0 && (
-            <div class="chalkboard" aria-label="The healer's chalkboard">
-              <div class="chalkboard-title">Cures</div>
-              <ul>
-                {symptoms.map((sym) => (
-                  <li key={sym}>
-                    <span>{sym}</span> → <span>{CHALKBOARD[sym]}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          <div class={`sign-board ${w.open ? 'is-open' : ''}`}>{w.open ? 'Open' : 'Closed'}</div>
+          <div class="tally" title="Customers served · potions turned away · customers who gave up">
+            ✅ {w.stats.served} · 🔁 {w.stats.rejected} · 🚪 {w.stats.leftUnhappy}
+          </div>
         </div>
 
+        <div class="window" aria-hidden="true" />
         <div class="floor">
-          <div class="queue" aria-label="Customers waiting">
+          <div class="cauldron-station">
+            <Cauldron brewing={a.activity === 'brewing'} color={a.brewing ? POTIONS[a.brewing].color : undefined} />
+          </div>
+
+          <div class="counter" aria-hidden="true" />
+
+          <div
+            class={`apprentice at-${a.spot} act-${a.activity}`}
+            style={{ transitionDuration: `${walkSeconds}s` }}
+            aria-label={`Your apprentice is ${a.activity}`}
+          >
+            {a.says && <div class="speech">{a.says}</div>}
+            {a.holding && (
+              <div class="held">
+                <Potion id={a.holding} size={24} />
+              </div>
+            )}
+            <span class="apprentice-emoji">🧙</span>
+          </div>
+
+          {front && <FrontCustomer c={front} />}
+
+          <div class="queue" aria-label={`${waiting.length} more customers waiting in line`}>
             {waiting.map((c) => (
-              <div class="customer waiting" key={c.id} title={`${c.name} (${KINDS[c.kind].title})`}>
+              <div class="customer waiting" key={c.id} title={`${c.name} wants a ${c.wants}`}>
+                <span class="mini-want">
+                  <Potion id={c.wants} size={11} />
+                </span>
                 <span class="customer-emoji">{c.emoji}</span>
               </div>
             ))}
           </div>
-
-          {front ? (
-            <FrontCustomer c={front} brewing={counter?.customerId === front.id && counter.phase === 'brewing'} />
-          ) : reacting ? null : (
-            <div class="empty-counter">{s.open ? 'Waiting for the next customer…' : 'The shop is quiet.'}</div>
-          )}
-
-          {reacting && (
-            <div key={reacting.customerId} class={`reaction ${reacting.verdict === 'correct' ? 'happy' : 'confused'}`}>
-              {reacting.verdict === 'correct' ? `😊 +${reacting.earned} 🪙` : reacting.verdict === 'timeout' ? '💤' : '🤔'}
-            </div>
-          )}
-        </div>
-
-        <div class="counter-top">
-          <Cauldron brewing={counter?.phase === 'brewing'} />
         </div>
       </div>
 
-      <div class="upgrades">
-        {(Object.keys(UPGRADES) as UpgradeId[]).map((id) => {
-          const def = UPGRADES[id];
-          const lvl = s.upgrades[id];
-          const cost = upgradeCost(s, id);
-          return (
-            <div class="upgrade" key={id}>
-              <div class="upgrade-head">
-                <span class="upgrade-emoji">{def.emoji}</span>
-                <div>
-                  <div class="upgrade-title">
-                    {def.title} <span class="level">Lv {lvl}</span>
-                  </div>
-                  <div class="upgrade-desc">{def.describe(lvl)}</div>
-                </div>
-              </div>
-              {cost === undefined ? (
-                <span class="maxed">Fully upgraded</span>
-              ) : (
-                <button class="btn small" disabled={s.coins < cost} onClick={() => ctl.buyUpgrade(id)}>
-                  Upgrade · {cost} 🪙
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <ShopPanel ctl={ctl} />
     </section>
   );
 }
 
-function Cauldron({ brewing }: { brewing: boolean }) {
+function FrontCustomer({ c }: { c: Customer }) {
+  const pct = Math.max(0, (c.patience / c.maxPatience) * 100);
+  const mood = pct > 50 ? 'calm' : pct > 20 ? 'uneasy' : 'cross';
   return (
-    <svg class={`cauldron ${brewing ? 'bubbling' : ''}`} width="64" height="56" viewBox="0 0 64 56" aria-hidden="true">
-      <circle class="c-bubble cb1" cx="24" cy="14" r="4" />
-      <circle class="c-bubble cb2" cx="36" cy="10" r="3" />
-      <circle class="c-bubble cb3" cx="42" cy="16" r="2.5" />
-      <ellipse cx="32" cy="22" rx="24" ry="6" fill="var(--teal)" />
+    <div class="front-customer" key={c.id}>
+      <div class={`want ${c.wrongTries ? 'shake' : ''}`} key={`${c.id}-${c.wrongTries}`}>
+        <Potion id={c.wants} size={20} />
+        <span>{c.wants}</span>
+      </div>
+      <span class="customer-emoji">{c.emoji}</span>
+      <div class="customer-name">
+        {c.name}
+        {c.wrongTries > 0 && <span class="wrong-tries"> · pays {Math.round(c.rewardMult * 100)}%</span>}
+      </div>
+      <div class={`patience ${mood}`} role="meter" aria-label="Patience" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+        <span style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+export function Potion({ id, size = 18 }: { id: PotionId; size?: number }) {
+  const color = POTIONS[id].color;
+  return (
+    <svg width={size} height={size * 1.25} viewBox="0 0 20 25" aria-hidden="true" class="potion-icon">
+      <rect x="7" y="1" width="6" height="3" rx="1" fill="#8a5a35" />
+      <path d="M8 4 h4 v4 l5 6 a7 7 0 0 1 -14 0 l5 -6 z" fill="#fffaf0" stroke="#5e3b22" stroke-width="1.2" />
+      <path d="M4.2 15 a6 6 0 0 0 11.6 0 z" fill={color} />
+      <circle cx="8" cy="17" r="1.2" fill="rgba(255,255,255,0.6)" />
+    </svg>
+  );
+}
+
+function Cauldron({ brewing, color }: { brewing: boolean; color?: string }) {
+  const liquid = color ?? 'var(--teal)';
+  return (
+    <svg class={`cauldron ${brewing ? 'bubbling' : ''}`} width="116" height="102" viewBox="0 0 64 56" aria-hidden="true">
+      <circle class="c-bubble cb1" cx="24" cy="14" r="4" fill={liquid} />
+      <circle class="c-bubble cb2" cx="36" cy="10" r="3" fill={liquid} />
+      <circle class="c-bubble cb3" cx="42" cy="16" r="2.5" fill={liquid} />
+      <ellipse cx="32" cy="22" rx="24" ry="6" fill={liquid} />
       <path d="M8 22 Q6 50 32 52 Q58 50 56 22 Z" fill="#3a2e28" />
       <ellipse cx="32" cy="22" rx="26" ry="5" fill="none" stroke="#2a211c" stroke-width="4" />
       <path d="M16 51 l-4 4 M48 51 l4 4" stroke="#2a211c" stroke-width="4" stroke-linecap="round" />
@@ -107,28 +117,42 @@ function Cauldron({ brewing }: { brewing: boolean }) {
   );
 }
 
-function FrontCustomer({ c, brewing }: { c: Customer; brewing: boolean }) {
+function ShopPanel({ ctl }: { ctl: Controller }) {
+  const w = useWorld(ctl);
+  const items = SHOP.filter((i) => i.visible(w));
   return (
-    <div class={`front ${brewing ? 'brewing' : ''}`}>
-      <div class="bubble">
-        {c.teaser && <div class="new-badge">New customer!</div>}
-        <div class="bubble-name">
-          {c.name} <span class="kind">· {KINDS[c.kind].title}</span>
-        </div>
-        <div class="bubble-line">“{c.line}”</div>
-        <div class="order-slip" aria-label="Order slip">
-          {Object.entries(c.order).map(([k, v]) => (
-            <div key={k}>
-              <code>
-                order.{k} <span class="slip-eq">→</span> {py(v)}
-              </code>
+    <div class="shop-panel" aria-label="Shop">
+      {items.map((item) => {
+        const cost = itemCost(w, item.id);
+        const owned = cost === undefined;
+        return (
+          <div class={`shop-item ${owned ? 'owned' : ''}`} key={item.id}>
+            <span class="shop-emoji" aria-hidden="true">
+              {item.emoji}
+            </span>
+            <div class="shop-text">
+              <div class="shop-title">
+                {item.title}
+                {item.id === 'cauldron' && <span class="level">Lv {w.cauldronLevel}</span>}
+              </div>
+              <div class="shop-blurb">{item.blurb}</div>
             </div>
-          ))}
-        </div>
-      </div>
-      <div class="customer at-counter">
-        <span class="customer-emoji">{c.emoji}</span>
-      </div>
+            {owned ? (
+              item.id.startsWith('page:') ? (
+                <button class="btn small" onClick={() => (ctl.spellbookOpen.value = item.id.slice(5) as PageId)}>
+                  Read
+                </button>
+              ) : (
+                <span class="owned-tag">{item.id === 'cauldron' ? 'Max level' : 'Learned'}</span>
+              )
+            ) : (
+              <button class="btn small buy" disabled={w.coins < cost} onClick={() => ctl.buy(item.id)}>
+                {cost} 🪙
+              </button>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

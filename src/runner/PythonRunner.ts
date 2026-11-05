@@ -1,139 +1,139 @@
-import type { CallResult, Json } from '../game/types';
-import { DEFAULT_CALL_TIMEOUT_MS, type CodeRunner, type RunnerEvents, type SetCodeResult } from './CodeRunner';
-import type { WorkerRequest, WorkerResponse } from './python.worker';
+import type { ActionHost, CodeRunner, RunnerEvents, RunOutcome } from './CodeRunner';
+import { CONTROL_BYTES, DATA_BYTES, type WorkerRequest, type WorkerResponse } from './protocol';
 
-const SET_CODE_TIMEOUT_MS = 2000;
+/** If Python hasn't stopped this long after Stop, the worker is replaced. */
+const HARD_STOP_MS = 1500;
 
-type Pending = { resolve: (r: { result: string; stdout: string }) => void; reject: (e: Error) => void };
-
-/** One Pyodide worker. Loading takes a few seconds, so we keep a warm spare. */
-class PyWorker {
-  private worker: Worker;
-  private nextId = 1;
-  private pending = new Map<number, Pending>();
-  readonly ready: Promise<void>;
-
-  constructor(onStatus?: (text: string) => void) {
-    this.worker = new Worker(new URL('./python.worker.ts', import.meta.url), { type: 'module' });
-    this.worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
-      const msg = e.data;
-      if (msg.type === 'status') return onStatus?.(msg.text);
-      const p = this.pending.get(msg.id);
-      if (!p) return;
-      this.pending.delete(msg.id);
-      if (msg.type === 'done') p.resolve({ result: msg.result, stdout: msg.stdout });
-      else p.reject(new Error(msg.error));
-    };
-    this.worker.onerror = (e) => {
-      for (const p of this.pending.values()) p.reject(new Error(e.message || 'Worker crashed'));
-      this.pending.clear();
-    };
-    this.ready = this.send({ type: 'init' }).then(() => undefined);
-  }
-
-  send(req: DistributiveOmit<WorkerRequest, 'id'>): Promise<{ result: string; stdout: string }> {
-    const id = this.nextId++;
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.worker.postMessage({ ...req, id });
-    });
-  }
-
-  terminate() {
-    this.worker.terminate();
-    for (const p of this.pending.values()) p.reject(new Error('terminated'));
-    this.pending.clear();
-  }
-}
-
-type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
-
-const TIMED_OUT = Symbol('timeout');
-
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
-  let timer: ReturnType<typeof setTimeout>;
-  return Promise.race([
-    p.finally(() => clearTimeout(timer)),
-    new Promise<typeof TIMED_OUT>((resolve) => (timer = setTimeout(() => resolve(TIMED_OUT), ms))),
-  ]);
+interface Session {
+  worker: Worker;
+  control: Int32Array;
+  data: Uint8Array;
+  interrupt: Uint8Array;
+  ready: Promise<void>;
 }
 
 /**
- * Runs Python with Pyodide inside a Web Worker.
- * Requests are queued one at a time. If a call runs too long (an infinite loop),
- * the worker is terminated and a pre-warmed spare takes over with the same code.
+ * Runs Python with Pyodide in a Web Worker. While a spell runs, each game
+ * command blocks the worker (Atomics.wait) until the game has finished it.
+ * Requires a cross-origin isolated page for SharedArrayBuffer.
  */
 export class PythonRunner implements CodeRunner {
   readonly language = 'python';
-  private active?: PyWorker;
-  private spare?: PyWorker;
-  private code?: string;
-  private queue: Promise<unknown> = Promise.resolve();
+  private session?: Session;
+  private current?: { resolve(o: RunOutcome): void; host: ActionHost; hardStop?: ReturnType<typeof setTimeout> };
+  private encoder = new TextEncoder();
 
   constructor(private events: RunnerEvents = {}) {}
 
   async init(): Promise<void> {
-    this.active = new PyWorker(this.events.onStatus);
-    await this.active.ready;
-    this.spare = new PyWorker();
-    this.spare.ready.catch(() => (this.spare = undefined));
+    if (!globalThis.crossOriginIsolated) {
+      throw new Error('This page is not cross-origin isolated, so SharedArrayBuffer is unavailable.');
+    }
+    this.session = this.spawn(this.events.onStatus);
+    await this.session.ready;
   }
 
-  setCode(source: string): Promise<SetCodeResult> {
-    return this.enqueue(async () => {
-      const res = await withTimeout(this.worker().then((w) => w.send({ type: 'setCode', source })), SET_CODE_TIMEOUT_MS);
-      if (res === TIMED_OUT) {
-        await this.restart(this.code); // keep the last spell that worked
-        return { ok: false, timeout: true };
-      }
-      const parsed = JSON.parse(res.result);
-      if (parsed.ok) this.code = source;
-      return { ...parsed, line: parsed.line ?? undefined, stdout: res.stdout };
+  async run(source: string, host: ActionHost): Promise<RunOutcome> {
+    const s = this.session;
+    if (!s) throw new Error('PythonRunner.init() was not called');
+    if (this.current) throw new Error('A spell is already running');
+    await s.ready; // a replacement worker may still be loading
+    return new Promise<RunOutcome>((resolve) => {
+      this.current = { resolve, host };
+      s.worker.postMessage({ type: 'run', source } satisfies WorkerRequest);
     });
   }
 
-  call(fn: string, arg: Json, timeoutMs = DEFAULT_CALL_TIMEOUT_MS): Promise<CallResult> {
-    return this.enqueue(async () => {
-      const w = await this.worker();
-      const res = await withTimeout(w.send({ type: 'call', fn, arg: JSON.stringify(arg) }), timeoutMs);
-      if (res === TIMED_OUT) {
-        await this.restart(this.code);
-        return { kind: 'timeout' };
-      }
-      const parsed = JSON.parse(res.result);
-      return parsed.kind === 'ok'
-        ? { kind: 'ok', value: parsed.value, stdout: res.stdout }
-        : { ...parsed, line: parsed.line ?? undefined, stdout: res.stdout };
-    });
+  stop(): void {
+    const s = this.session;
+    const cur = this.current;
+    if (!s || !cur || cur.hardStop) return;
+    // Interrupt Python if it's computing, and wake it if it's waiting on a command.
+    s.interrupt[0] = 2;
+    Atomics.store(s.control, 0, 2);
+    Atomics.notify(s.control, 0);
+    cur.hardStop = setTimeout(() => {
+      // Still not stopped (stuck somewhere interrupts can't reach): replace the worker.
+      if (this.current !== cur) return;
+      s.worker.terminate();
+      this.session = this.spawn();
+      this.finish({ kind: 'stopped' });
+    }, HARD_STOP_MS);
   }
 
   dispose(): void {
-    this.active?.terminate();
-    this.spare?.terminate();
-    this.active = this.spare = undefined;
+    this.session?.worker.terminate();
+    this.session = undefined;
   }
 
-  private async worker(): Promise<PyWorker> {
-    if (!this.active) throw new Error('PythonRunner.init() was not called');
-    await this.active.ready;
-    return this.active;
+  private finish(outcome: RunOutcome) {
+    const cur = this.current;
+    if (!cur) return;
+    clearTimeout(cur.hardStop);
+    this.current = undefined;
+    cur.resolve(outcome);
   }
 
-  /** Swap in the spare worker (or start a fresh one) and reload the last good code. */
-  private async restart(code: string | undefined) {
-    this.active?.terminate();
-    this.active = this.spare ?? new PyWorker(this.events.onStatus);
-    this.spare = undefined;
-    this.events.onRestart?.();
-    await this.active.ready;
-    if (code !== undefined) await this.active.send({ type: 'setCode', source: code }).catch(() => undefined);
-    this.spare = new PyWorker();
-    this.spare.ready.catch(() => (this.spare = undefined));
+  private reply(s: Session, json: string) {
+    const bytes = this.encoder.encode(json);
+    s.data.set(bytes.subarray(0, DATA_BYTES));
+    Atomics.store(s.control, 1, Math.min(bytes.length, DATA_BYTES));
+    // Don't clobber a pending stop request.
+    Atomics.compareExchange(s.control, 0, 0, 1);
+    Atomics.notify(s.control, 0);
   }
 
-  private enqueue<T>(task: () => Promise<T>): Promise<T> {
-    const run = this.queue.then(task, task);
-    this.queue = run.catch(() => undefined);
-    return run;
+  private spawn(onStatus?: (text: string) => void): Session {
+    const worker = new Worker(new URL('./python.worker.ts', import.meta.url), { type: 'module' });
+    const controlBuf = new SharedArrayBuffer(CONTROL_BYTES);
+    const dataBuf = new SharedArrayBuffer(DATA_BYTES);
+    const interruptBuf = new SharedArrayBuffer(1);
+    let readyResolve!: () => void;
+    let readyReject!: (e: Error) => void;
+    const ready = new Promise<void>((res, rej) => ((readyResolve = res), (readyReject = rej)));
+    const s: Session = {
+      worker,
+      control: new Int32Array(controlBuf),
+      data: new Uint8Array(dataBuf),
+      interrupt: new Uint8Array(interruptBuf),
+      ready,
+    };
+
+    worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
+      if (this.session !== s) return; // a replaced worker
+      const msg = e.data;
+      switch (msg.type) {
+        case 'status':
+          onStatus?.(msg.text);
+          break;
+        case 'ready':
+          readyResolve();
+          break;
+        case 'failed':
+          readyReject(new Error(msg.error));
+          this.finish({ kind: 'error', errorType: 'InternalError', message: msg.error, traceback: msg.error });
+          break;
+        case 'loaded':
+          this.current?.host.loaded?.(msg.features);
+          break;
+        case 'action': {
+          const cur = this.current;
+          if (!cur) return this.reply(s, '{"stop":true}');
+          cur.host.perform(msg.name, JSON.parse(msg.args), msg.line).then(
+            (r) => this.reply(s, JSON.stringify(r)),
+            (err) => this.reply(s, JSON.stringify({ error: String(err?.message ?? err) })),
+          );
+          break;
+        }
+        case 'done': {
+          const o = JSON.parse(msg.outcome);
+          this.finish(o.kind === 'error' ? { ...o, line: o.line ?? undefined } : o);
+          break;
+        }
+      }
+    };
+    worker.onerror = (e) => readyReject(new Error(e.message || 'The Python worker crashed'));
+    worker.postMessage({ type: 'init', control: controlBuf, data: dataBuf, interrupt: interruptBuf } satisfies WorkerRequest);
+    return s;
   }
 }

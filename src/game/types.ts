@@ -1,84 +1,88 @@
-/** Plain JSON data — the only thing that crosses the game ↔ code-runner boundary. */
+/** Plain JSON data: the only thing that crosses the game ↔ code-runner boundary. */
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
-/** What a customer asks for. Fields appear as `order.<field>` in player code. */
-export interface Order {
-  potion?: string;
-  symptom?: string;
-  quantity?: number;
-  [key: string]: Json | undefined;
-}
-
-export type KindId = 'first' | 'villager' | 'healer' | 'knight';
-export type PageId = 'strings' | 'conditionals' | 'dictionaries' | 'loops';
-export type UpgradeId = 'sign' | 'tipjar';
+export type PotionId = 'health potion' | 'mana potion';
+export type Spot = 'cauldron' | 'counter';
+export type PageId = 'first' | 'repeat' | 'choices';
+export type ShopItemId = 'page:repeat' | 'page:choices' | 'recipe:mana' | 'cauldron';
 
 export interface Customer {
   id: number;
-  kind: KindId;
   name: string;
   emoji: string;
-  line: string;
-  order: Order;
-  expected: Json;
-  /** First customer of a new type: failing is free and points to a Spellbook page. */
-  teaser: boolean;
+  wants: PotionId;
+  /** Seconds of patience left. Only counts down while this customer is at the counter. */
+  patience: number;
+  maxPatience: number;
+  /** Game time this customer reached the counter (undefined while queued). */
+  atCounterSince?: number;
+  /** Halves with every wrong potion they turn away. */
+  rewardMult: number;
+  wrongTries: number;
 }
 
-/** Result of calling the player's function. Produced by a CodeRunner. */
-export type CallResult =
-  | { kind: 'ok'; value: Json; stdout: string }
-  | { kind: 'error'; errorType: string; message: string; line?: number; traceback: string; stdout: string }
-  | { kind: 'timeout' };
+export type Activity = 'idle' | 'walking' | 'brewing' | 'waiting' | 'serving' | 'reading' | 'talking' | 'shrugging';
 
-export type Verdict = 'correct' | 'wrong' | 'error' | 'timeout';
+export interface Apprentice {
+  spot: Spot;
+  holding: PotionId | null;
+  activity: Activity;
+  /** Potion in the cauldron while brewing. */
+  brewing?: PotionId;
+  /** Speech bubble text. */
+  says?: string;
+}
 
-export interface Receipt {
+/** One small piece of an action, processed over game time. */
+export type Step =
+  | { kind: 'walk'; to: Spot; time: number }
+  | { kind: 'brew'; potion: PotionId; time: number }
+  | { kind: 'waitCustomer' }
+  | { kind: 'handover'; time: number }
+  | { kind: 'read'; time: number }
+  | { kind: 'say'; text: string; time: number; activity: Activity; result: Json };
+
+/** An action requested by the player's code (brew, serve, order…), in progress. */
+export interface Task {
+  action: string;
+  steps: Step[];
+  /** Time already spent on steps[0]. */
+  elapsed: number;
+  done: boolean;
+  result: Json;
+  /** Set when the action can't run at all; the runner raises it as an error in the player's code. */
+  error?: string;
+}
+
+export interface LedgerEntry {
   id: number;
-  tick: number;
-  customer: Pick<Customer, 'name' | 'emoji' | 'kind' | 'line' | 'order' | 'expected' | 'teaser'>;
-  verdict: Verdict;
-  got?: Json;
-  hint?: string;
-  traceback?: string;
-  stdout?: string;
-  coins: number;
-  tip: number;
-  repDelta: number;
-  practice: boolean;
-  /** Page the player should look at to solve this customer. */
-  suggestPage?: PageId;
-  /** Page granted for free because the player solved a teaser on their own. */
-  freePage?: PageId;
+  time: number;
+  text: string;
+  tone: 'info' | 'reward' | 'warn' | 'sale';
+  /** Expandable extra detail, e.g. a raw traceback. */
+  detail?: string;
 }
 
-export type LedgerEntry =
-  | { type: 'receipt'; receipt: Receipt }
-  | { type: 'message'; id: number; tick: number; text: string; tone: 'info' | 'reward' | 'warn'; detail?: string };
-
-export interface GameState {
-  version: 1;
+export interface World {
+  version: 2;
+  /** Game seconds. Only advances while the shop is open (a spell is running). */
+  time: number;
   coins: number;
   lifetimeCoins: number;
-  reputation: number;
-  tick: number;
-  open: boolean;
-  speed: number;
-  /** Index into STAGES. */
-  stage: number;
-  /** Correct serves of the current stage's customer type since the stage began. */
-  stageCorrect: number;
-  teaserSpawned: boolean;
+  owned: ShopItemId[];
+  cauldronLevel: number;
   pages: PageId[];
-  availablePages: PageId[];
-  upgrades: Record<UpgradeId, number>;
-  discoveries: string[];
+  apprentice: Apprentice;
   queue: Customer[];
   spawnTimer: number;
   nextId: number;
-  failStreak: number;
-  stats: { served: number; correct: number; wrong: number };
-  code: string;
   rngState: number;
+  stats: { served: number; rejected: number; leftUnhappy: number; runs: number };
+  discoveries: string[];
+  code: string;
+  speed: number;
   ledger: LedgerEntry[];
+  /** Transient: not saved. */
+  open: boolean;
+  task: Task | null;
 }

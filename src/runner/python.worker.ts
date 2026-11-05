@@ -2,60 +2,58 @@
 import type { PyodideInterface } from 'pyodide';
 import HARNESS from './harness.py?raw';
 import { PYODIDE_INDEX_URL } from './config';
-
-/** Messages from the main thread. */
-export type WorkerRequest =
-  | { id: number; type: 'init' }
-  | { id: number; type: 'setCode'; source: string }
-  | { id: number; type: 'call'; fn: string; arg: string };
-
-/** Messages to the main thread. `result` is a JSON string from the harness. */
-export type WorkerResponse =
-  | { id: number; type: 'done'; result: string; stdout: string }
-  | { id: number; type: 'failed'; error: string }
-  | { type: 'status'; text: string };
-
-const MAX_STDOUT = 2000;
+import type { WorkerRequest, WorkerResponse } from './protocol';
 
 let pyodide: PyodideInterface | undefined;
-let setCode: ((source: string) => string) | undefined;
-let callFn: ((fn: string, arg: string) => string) | undefined;
-let stdout: string[] = [];
+let control: Int32Array;
+let data: Uint8Array;
+let interrupt: Uint8Array;
+const decoder = new TextDecoder();
 
 const post = (msg: WorkerResponse) => (self as DedicatedWorkerGlobalScope).postMessage(msg);
 
-async function init() {
+/** Called synchronously from Python: hand the command to the game and block until it replies. */
+function action(name: string, args: string, line: number): string {
+  if (Atomics.load(control, 0) === 2) return '{"stop":true}';
+  Atomics.store(control, 0, 0);
+  post({ type: 'action', name, args, line });
+  Atomics.wait(control, 0, 0);
+  if (Atomics.load(control, 0) === 2) return '{"stop":true}';
+  const len = Atomics.load(control, 1);
+  return decoder.decode(data.slice(0, len));
+}
+
+async function init(msg: Extract<WorkerRequest, { type: 'init' }>) {
+  control = new Int32Array(msg.control);
+  data = new Uint8Array(msg.data);
+  interrupt = new Uint8Array(msg.interrupt);
   post({ type: 'status', text: 'Fetching the cauldron…' });
   const { loadPyodide } = (await import(/* @vite-ignore */ `${PYODIDE_INDEX_URL}pyodide.mjs`)) as typeof import('pyodide');
   post({ type: 'status', text: 'Warming up the cauldron…' });
   pyodide = await loadPyodide({ indexURL: PYODIDE_INDEX_URL });
-  const collect = (line: string) => {
-    if (stdout.join('\n').length < MAX_STDOUT) stdout.push(line);
-  };
-  pyodide.setStdout({ batched: collect });
-  pyodide.setStderr({ batched: collect });
+  pyodide.setInterruptBuffer(interrupt);
+  pyodide.registerJsModule('_shop', {
+    action,
+    loaded: (features: string) => post({ type: 'loaded', features: JSON.parse(features) }),
+  });
   pyodide.runPython(HARNESS);
-  setCode = pyodide.globals.get('set_code');
-  callFn = pyodide.globals.get('call');
-  post({ type: 'status', text: 'Ready!' });
+  post({ type: 'ready' });
 }
 
 self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
-  const req = event.data;
-  stdout = [];
+  const msg = event.data;
   try {
-    let result = '';
-    if (req.type === 'init') {
-      await init();
-      result = '{}';
-    } else if (req.type === 'setCode') {
-      result = setCode!(req.source);
+    if (msg.type === 'init') {
+      await init(msg);
     } else {
-      result = callFn!(req.fn, req.arg);
+      Atomics.store(control, 0, 0);
+      interrupt[0] = 0;
+      const runSpell = pyodide!.globals.get('run_spell');
+      const outcome: string = runSpell(msg.source);
+      runSpell.destroy();
+      post({ type: 'done', outcome });
     }
-    const out = stdout.join('\n');
-    post({ id: req.id, type: 'done', result, stdout: out.length > MAX_STDOUT ? out.slice(0, MAX_STDOUT) + '…' : out });
   } catch (err) {
-    post({ id: req.id, type: 'failed', error: String(err) });
+    post({ type: 'failed', error: String(err) });
   }
 };

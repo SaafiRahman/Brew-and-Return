@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buyUpgrade, createGame, serveFront } from '../src/game/engine';
+import { buy, createWorld, openShop } from '../src/game/world';
 import { clearSave, deserialize, loadGame, saveGame, SAVE_KEY, type KeyValueStore } from '../src/game/save';
 
 function memoryStore(): KeyValueStore & { data: Map<string, string> } {
@@ -13,40 +13,43 @@ function memoryStore(): KeyValueStore & { data: Map<string, string> } {
 }
 
 describe('save / load', () => {
-  it('round-trips a game, always reopening closed', () => {
+  it('round-trips a world, always loading with the shop closed and the apprentice idle', () => {
     const store = memoryStore();
-    const s = createGame(1);
-    serveFront(s, { kind: 'ok', value: 'health potion', stdout: '' });
-    s.coins = 50;
-    buyUpgrade(s, 'sign');
-    s.open = true;
-    s.code = 'def serve(order):\n    return order.potion\n';
-    saveGame(store, s);
+    const w = createWorld(1);
+    w.coins = 20;
+    buy(w, 'page:repeat');
+    openShop(w);
+    w.apprentice.activity = 'brewing';
+    w.apprentice.brewing = 'health potion';
+    w.code = 'while True:\n    brew("health potion")\n    serve()\n';
+    saveGame(store, w);
 
     const loaded = loadGame(store)!;
-    expect(loaded.coins).toBe(35);
-    expect(loaded.upgrades.sign).toBe(1);
-    expect(loaded.code).toBe(s.code);
-    expect(loaded.stage).toBe(1);
+    expect(loaded.coins).toBe(10);
+    expect(loaded.pages).toContain('repeat');
+    expect(loaded.code).toBe(w.code);
     expect(loaded.open).toBe(false);
+    expect(loaded.task).toBeNull();
+    expect(loaded.apprentice.activity).toBe('idle');
+    expect(loaded.apprentice.brewing).toBeUndefined();
   });
 
-  it('ignores corrupt or future saves', () => {
+  it('starts fresh from the old prototype save, corrupt data, or a future version', () => {
+    expect(deserialize(JSON.stringify({ version: 1, coins: 500 }))).toBeUndefined();
     expect(deserialize('not json')).toBeUndefined();
     expect(deserialize('{"version": 99}')).toBeUndefined();
-    expect(deserialize('null')).toBeUndefined();
   });
 
-  it('fills in fields missing from older saves', () => {
-    const loaded = deserialize(JSON.stringify({ version: 1, coins: 7, upgrades: {} }))!;
+  it('fills in fields missing from a partial save', () => {
+    const loaded = deserialize(JSON.stringify({ version: 2, coins: 7 }))!;
     expect(loaded.coins).toBe(7);
-    expect(loaded.upgrades).toEqual({ sign: 0, tipjar: 0 });
-    expect(loaded.pages).toEqual(['strings']);
+    expect(loaded.stats.runs).toBe(0);
+    expect(loaded.pages).toEqual(['first']);
   });
 
   it('can clear a save', () => {
     const store = memoryStore();
-    saveGame(store, createGame(1));
+    saveGame(store, createWorld(1));
     expect(store.data.has(SAVE_KEY)).toBe(true);
     clearSave(store);
     expect(loadGame(store)).toBeUndefined();

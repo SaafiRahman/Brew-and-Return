@@ -1,8 +1,8 @@
-import { createGame } from './engine';
-import type { GameState } from './types';
+import { createWorld } from './world';
+import type { World } from './types';
 
 export const SAVE_KEY = 'brew-and-return/save';
-export const CURRENT_VERSION = 1;
+export const CURRENT_VERSION = 2;
 
 /** Minimal storage interface so saves can be tested without a browser. */
 export interface KeyValueStore {
@@ -12,17 +12,18 @@ export interface KeyValueStore {
 }
 
 /**
- * Migrations from version N to N+1, keyed by N. Add one whenever GameState
- * changes shape, and bump CURRENT_VERSION.
+ * Migrations from version N to N+1, keyed by N. Add one whenever World changes
+ * shape, and bump CURRENT_VERSION. Version 1 was the old serve(order) prototype,
+ * which can't be carried over, so it has no migration and starts fresh.
  */
 const MIGRATIONS: Record<number, (old: any) => any> = {};
 
-export function serialize(s: GameState): string {
-  // The shop always starts closed after loading: the player reopens it.
-  return JSON.stringify({ ...s, open: false });
+export function serialize(w: World): string {
+  const { open: _open, task: _task, ...rest } = w;
+  return JSON.stringify(rest);
 }
 
-export function deserialize(raw: string): GameState | undefined {
+export function deserialize(raw: string): World | undefined {
   let data: any;
   try {
     data = JSON.parse(raw);
@@ -30,26 +31,28 @@ export function deserialize(raw: string): GameState | undefined {
     return undefined;
   }
   if (!data || typeof data !== 'object' || typeof data.version !== 'number') return undefined;
-  if (data.version > CURRENT_VERSION) return undefined; // save from a newer build
+  if (data.version > CURRENT_VERSION) return undefined;
   while (data.version < CURRENT_VERSION) {
     const migrate = MIGRATIONS[data.version];
     if (!migrate) return undefined;
     data = migrate(data);
   }
-  // Fill in any fields missing from older or hand-edited saves.
-  const fresh = createGame(data.rngState ?? 1);
-  return { ...fresh, ...data, upgrades: { ...fresh.upgrades, ...data.upgrades }, stats: { ...fresh.stats, ...data.stats }, open: false };
+  const fresh = createWorld(data.rngState ?? 1);
+  const w: World = { ...fresh, ...data, stats: { ...fresh.stats, ...data.stats }, open: false, task: null };
+  // Anything mid-action when the game was saved is dropped: the spell isn't running any more.
+  w.apprentice = { ...fresh.apprentice, ...data.apprentice, activity: 'idle', brewing: undefined, says: undefined };
+  return w;
 }
 
-export function saveGame(store: KeyValueStore, s: GameState): void {
+export function saveGame(store: KeyValueStore, w: World): void {
   try {
-    store.setItem(SAVE_KEY, serialize(s));
+    store.setItem(SAVE_KEY, serialize(w));
   } catch {
     // Storage full or blocked: the game keeps running, just unsaved.
   }
 }
 
-export function loadGame(store: KeyValueStore): GameState | undefined {
+export function loadGame(store: KeyValueStore): World | undefined {
   try {
     const raw = store.getItem(SAVE_KEY);
     return raw ? deserialize(raw) : undefined;

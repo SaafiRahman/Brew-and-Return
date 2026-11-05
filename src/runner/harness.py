@@ -1,35 +1,27 @@
-# Runs inside Pyodide. Loads the player's spell and calls its functions.
-# Everything that crosses back to JavaScript is a JSON string.
+# Runs inside Pyodide. Runs the player's spell top to bottom.
+#
+# The spell's commands (brew, serve, order, print) call `_shop.action`, a
+# synchronous bridge provided by the host. In the browser it blocks the worker
+# until the game has finished animating the action; in tests it runs the game
+# simulation directly. Everything crossing the bridge is a JSON string.
 import ast
 import json
+import sys
 import traceback
 
+import _shop
+
 FILENAME = "<your spell>"
-_ns = None
 
 STRING_METHODS = {"lower", "upper", "strip", "lstrip", "rstrip", "title", "replace", "split", "capitalize", "startswith", "endswith"}
 
 
-class Order:
-    """The order slip handed to serve(). Fields are read with a dot: order.potion
+class ShopError(Exception):
+    """A command the shop couldn't carry out (unknown potion, missing recipe…)."""
 
-    Every known field exists on every order and is None when the customer didn't
-    mention it, so `if order.symptom == "cough":` is safe for any customer.
-    Misspelled fields still raise AttributeError.
-    """
 
-    potion = None
-    symptom = None
-    quantity = None
-    budget = None
-
-    def __init__(self, data):
-        for key, value in data.items():
-            object.__setattr__(self, key, value)
-
-    def __repr__(self):
-        inner = ", ".join(f"{k}={v!r}" for k, v in self.__dict__.items())
-        return f"Order({inner})"
+class SpellStopped(BaseException):
+    """The player pressed Stop. BaseException so a bare `except:` can't swallow it… mostly."""
 
 
 def _features(tree):
@@ -54,9 +46,51 @@ def _features(tree):
             found.add("variable")
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in STRING_METHODS:
             found.add("method")
-    if functions > 1:
+    if functions >= 1:
         found.add("helper")
     return sorted(found)
+
+
+def _spell_line():
+    """Line of the player's spell that is running right now."""
+    frame = sys._getframe(1)
+    while frame is not None:
+        if frame.f_code.co_filename == FILENAME:
+            return frame.f_lineno
+        frame = frame.f_back
+    return 0
+
+
+def _act(name, *args):
+    reply = json.loads(_shop.action(name, json.dumps(list(args)), _spell_line()))
+    if reply.get("stop"):
+        raise SpellStopped()
+    if "error" in reply:
+        raise ShopError(reply["error"])
+    return reply.get("value")
+
+
+def brew(potion):
+    """Walk to the cauldron and brew a potion, e.g. brew("health potion")."""
+    return _act("brew", potion)
+
+
+def serve():
+    """Walk to the counter and hand your potion to the customer. Waits for one if nobody is there."""
+    return _act("serve")
+
+
+def order():
+    """Walk to the counter and find out what the customer wants, e.g. "mana potion"."""
+    return _act("order")
+
+
+def say(*things, sep=" ", end="\n", file=None, flush=False):
+    """print() makes your apprentice say something."""
+    words = []
+    for t in things:
+        words.append(t if isinstance(t, str) else repr(t))
+    return _act("say", sep.join(words))
 
 
 def _error(e):
@@ -73,40 +107,20 @@ def _error(e):
     return {"errorType": type(e).__name__, "message": message, "line": line, "traceback": text}
 
 
-def _to_json(value, depth=0):
-    if value is None or isinstance(value, (bool, int, str)):
-        return value
-    if isinstance(value, float):
-        return value if value == value and abs(value) != float("inf") else repr(value)
-    if depth > 20:
-        return {"__type__": type(value).__name__, "__repr__": "…"}
-    if isinstance(value, (list, tuple)):
-        return [_to_json(v, depth + 1) for v in value]
-    if isinstance(value, dict):
-        return {str(k): _to_json(v, depth + 1) for k, v in value.items()}
-    kind = "function" if callable(value) and not isinstance(value, type) else type(value).__name__
-    return {"__type__": kind, "__repr__": repr(value)[:200]}
-
-
-def set_code(source):
-    global _ns
+def run_spell(source):
+    """Run a whole spell. Returns a JSON outcome: finished, stopped or error."""
     try:
         tree = ast.parse(source, FILENAME)
-        ns = {"__name__": "__spell__", "Order": Order}
-        exec(compile(tree, FILENAME, "exec"), ns)
-    except BaseException as e:
-        return json.dumps({"ok": False, **_error(e)})
-    if not callable(ns.get("serve")):
-        return json.dumps({"ok": False, "errorType": "MissingServe", "message": "", "line": None, "traceback": ""})
-    _ns = ns
-    return json.dumps({"ok": True, "features": _features(tree)})
+        code = compile(tree, FILENAME, "exec")
+    except SyntaxError as e:
+        return json.dumps({"kind": "error", **_error(e)})
 
-
-def call(fn_name, arg_json):
-    if _ns is None or not callable(_ns.get(fn_name)):
-        return json.dumps({"kind": "error", "errorType": "MissingServe", "message": "", "line": None, "traceback": ""})
+    _shop.loaded(json.dumps(_features(tree)))
+    ns = {"__name__": "__spell__", "brew": brew, "serve": serve, "order": order, "print": say}
     try:
-        result = _ns[fn_name](Order(json.loads(arg_json)))
+        exec(code, ns)
+    except (SpellStopped, KeyboardInterrupt):
+        return json.dumps({"kind": "stopped"})
     except BaseException as e:
         return json.dumps({"kind": "error", **_error(e)})
-    return json.dumps({"kind": "ok", "value": _to_json(result)})
+    return json.dumps({"kind": "finished"})

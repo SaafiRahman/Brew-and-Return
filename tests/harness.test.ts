@@ -1,25 +1,50 @@
 import { readFileSync } from 'node:fs';
 import { loadPyodide, type PyodideInterface } from 'pyodide';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { PYODIDE_VERSION } from '../src/runner/config';
 import pkg from 'pyodide/package.json';
+import { PYODIDE_VERSION } from '../src/runner/config';
+import { advance, beginAction, buy, createWorld, openShop } from '../src/game/world';
+import type { World } from '../src/game/types';
 
 /**
- * Integration tests for the Python harness, using the real Pyodide from
- * node_modules (no network). The browser loads the same version from the CDN.
+ * Integration tests: real Python (Pyodide from node_modules, no network) running
+ * real spells against the real game world. The `_shop` bridge here runs the
+ * simulation synchronously instead of waiting for animations.
  */
 let py: PyodideInterface;
-let setCode: (src: string) => any;
-let call: (order: object) => any;
+let world: World;
+let features: string[] = [];
+let actions: { name: string; line: number }[] = [];
+let actionLimit = Infinity;
 
 beforeAll(async () => {
   py = await loadPyodide();
+  py.registerJsModule('_shop', {
+    loaded: (json: string) => void (features = JSON.parse(json)),
+    action: (name: string, argsJson: string, line: number) => {
+      actions.push({ name, line });
+      if (actions.length > actionLimit) return JSON.stringify({ stop: true });
+      const task = beginAction(world, name, JSON.parse(argsJson));
+      if (task.error) return JSON.stringify({ error: task.error });
+      for (let i = 0; i < 100_000 && !task.done; i++) advance(world, 0.05);
+      return JSON.stringify({ value: task.result });
+    },
+  });
   py.runPython(readFileSync(new URL('../src/runner/harness.py', import.meta.url), 'utf8'));
-  const sc = py.globals.get('set_code');
-  const cl = py.globals.get('call');
-  setCode = (src) => JSON.parse(sc(src));
-  call = (order) => JSON.parse(cl('serve', JSON.stringify(order)));
 }, 60_000);
+
+function run(source: string, opts: { limit?: number; setup?: (w: World) => void } = {}) {
+  world = createWorld(5);
+  opts.setup?.(world);
+  openShop(world);
+  actions = [];
+  features = [];
+  actionLimit = opts.limit ?? Infinity;
+  const runSpell = py.globals.get('run_spell');
+  const outcome = JSON.parse(runSpell(source));
+  runSpell.destroy();
+  return outcome;
+}
 
 const spell = (...lines: string[]) => lines.join('\n') + '\n';
 
@@ -28,84 +53,72 @@ describe('python harness', () => {
     expect(pkg.version).toBe(PYODIDE_VERSION);
   });
 
-  it('returns a string', () => {
-    expect(setCode(spell('def serve(order):', '    return "health potion"'))).toEqual({ ok: true, features: [] });
-    expect(call({ potion: 'health potion' })).toEqual({ kind: 'ok', value: 'health potion' });
+  it('runs the starter spell and earns the first coins', () => {
+    const out = run(spell('# comment', 'brew("health potion")', 'serve()'));
+    expect(out).toEqual({ kind: 'finished' });
+    expect(actions).toEqual([
+      { name: 'brew', line: 2 },
+      { name: 'serve', line: 3 },
+    ]);
+    expect(world.coins).toBeGreaterThan(0);
   });
 
-  it('reads order fields with a dot', () => {
-    setCode(spell('def serve(order):', '    return order.potion'));
-    expect(call({ potion: 'mana potion' }).value).toBe('mana potion');
+  it('a while True loop keeps serving until stopped', () => {
+    const out = run(spell('while True:', '    brew("health potion")', '    serve()'), { limit: 20 });
+    expect(out).toEqual({ kind: 'stopped' });
+    expect(world.stats.served).toBeGreaterThanOrEqual(9);
+    expect(features).toEqual(['while']);
   });
 
-  it('reports the starter blank as a NameError on line 2', () => {
-    expect(setCode(spell('def serve(order):', '    return ___')).ok).toBe(true);
-    const r = call({ potion: 'health potion' });
-    expect(r).toMatchObject({ kind: 'error', errorType: 'NameError', line: 2 });
-    expect(r.traceback).toContain('<your spell>');
-    expect(r.traceback).not.toContain('harness');
+  it('order() and if let the apprentice serve wizards', () => {
+    const out = run(
+      spell('while True:', '    if order() == "mana potion":', '        brew("mana potion")', '    else:', '        brew("health potion")', '    serve()'),
+      {
+        limit: 60,
+        setup: (w) => {
+          w.coins = 100;
+          buy(w, 'page:repeat');
+          buy(w, 'recipe:mana');
+        },
+      },
+    );
+    expect(out.kind).toBe('stopped');
+    expect(world.stats.rejected).toBe(0);
+    expect(world.stats.served).toBeGreaterThanOrEqual(15);
+    expect(features).toEqual(['if', 'while']);
   });
 
-  it('reports syntax errors with a line number', () => {
-    const r = setCode(spell('def serve(order)', '    return "x"'));
-    expect(r).toMatchObject({ ok: false, errorType: 'SyntaxError', line: 1 });
-    expect(r.message).toMatch(/expected ':'/);
+  it('turns shop problems into ShopError with the line number', () => {
+    const out = run(spell('brew("mana potion")'));
+    expect(out).toMatchObject({ kind: 'error', errorType: 'ShopError', line: 1 });
+    expect(out.message).toMatch(/haven't learned the mana potion recipe/);
+    expect(out.traceback).not.toMatch(/harness|_act/);
   });
 
-  it('reports a missing serve function', () => {
-    expect(setCode('x = 1\n')).toMatchObject({ ok: false, errorType: 'MissingServe' });
+  it('reports syntax errors before running anything', () => {
+    const out = run(spell('while True', '    serve()'));
+    expect(out).toMatchObject({ kind: 'error', errorType: 'SyntaxError', line: 1 });
+    expect(actions).toHaveLength(0);
   });
 
-  it('keeps the last good spell when a new one fails to load', () => {
-    setCode(spell('def serve(order):', '    return "kept"'));
-    setCode('def serve(order:\n');
-    expect(call({}).value).toBe('kept');
+  it('reports runtime errors with the spell line', () => {
+    const out = run(spell('brew("health potion")', 'sevre()'));
+    expect(out).toMatchObject({ kind: 'error', errorType: 'NameError', line: 2 });
+    expect(out.traceback).toContain('<your spell>');
   });
 
-  it('reads known fields the customer did not mention as None', () => {
-    setCode(spell('def serve(order):', '    if order.symptom == "cough":', '        return "honey potion"', '    return order.potion'));
-    expect(call({ potion: 'mana potion' }).value).toBe('mana potion');
-    expect(call({ symptom: 'cough' }).value).toBe('honey potion');
-    expect(call({ symptom: 'fever' }).value).toBeNull();
+  it('print() makes the apprentice talk', () => {
+    run(spell('print("Hello,", 2, "customers")'));
+    expect(world.ledger.at(-1)!.text).toContain('Hello, 2 customers');
   });
 
-  it('still reports misspelled order fields', () => {
-    setCode(spell('def serve(order):', '    return order.potoin'));
-    expect(call({ potion: 'mana potion' })).toMatchObject({ errorType: 'AttributeError', message: "'Order' object has no attribute 'potoin'" });
-  });
-
-  it('turns tuples into lists and None into null', () => {
-    setCode(spell('def serve(order):', '    return (order.potion,) * order.quantity'));
-    expect(call({ potion: 'luck potion', quantity: 2 }).value).toEqual(['luck potion', 'luck potion']);
-    setCode(spell('def serve(order):', '    pass'));
-    expect(call({}).value).toBeNull();
-  });
-
-  it('marks values that are not plain data', () => {
-    setCode(spell('def serve(order):', '    return serve'));
-    expect(call({}).value).toMatchObject({ __type__: 'function' });
-  });
-
-  it('keeps module-level state between calls', () => {
-    setCode(spell('count = 0', 'def serve(order):', '    global count', '    count += 1', '    return count'));
-    call({});
-    expect(call({}).value).toBe(2);
+  it('wrong argument counts give the usual TypeError', () => {
+    expect(run(spell('brew()'))).toMatchObject({ errorType: 'TypeError' });
+    expect(run(spell('serve("x")'))).toMatchObject({ errorType: 'TypeError' });
   });
 
   it('detects concepts for discovery bonuses', () => {
-    const r = setCode(
-      spell(
-        'recipes = {"cough": "honey potion"}',
-        'def helper(x):',
-        '    return x.lower().strip()',
-        'def serve(order):',
-        '    potions = []',
-        '    for i in range(2):',
-        '        if True:',
-        '            potions.append(f"{order.potion}")',
-        '    return potions',
-      ),
-    );
-    expect(r.features).toEqual(['dict', 'for', 'fstring', 'helper', 'if', 'list', 'method', 'variable']);
+    run(spell('def go(p):', '    brew(p.lower().strip())', 'potions = [f"{1}"]', 'for p in ["health potion"]:', '    go(p)', 'd = {}'));
+    expect(features).toEqual(['dict', 'for', 'fstring', 'helper', 'list', 'method', 'variable']);
   });
 });
