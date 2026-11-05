@@ -113,7 +113,7 @@ export const PAGES: Record<PageId, PageDef> = {
       'Words in Python are called strings. Wrap them in quotes so your apprentice knows it is text, not a spell: `"health potion"`.\n\n' +
       '`return` hands something back to the customer. Whatever comes after `return` is what they receive.\n\n' +
       'Each order has details you can read with a dot: `order.potion` is the potion the customer asked for.',
-    example: 'def serve(order):\n    return order.potion',
+    example: 'def serve(order):\n    return "health potion"',
   },
   conditionals: {
     id: 'conditionals',
