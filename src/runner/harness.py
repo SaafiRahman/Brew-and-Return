@@ -11,7 +11,17 @@ STRING_METHODS = {"lower", "upper", "strip", "lstrip", "rstrip", "title", "repla
 
 
 class Order:
-    """The order slip handed to serve(). Fields are read with a dot: order.potion"""
+    """The order slip handed to serve(). Fields are read with a dot: order.potion
+
+    Every known field exists on every order and is None when the customer didn't
+    mention it, so `if order.symptom == "cough":` is safe for any customer.
+    Misspelled fields still raise AttributeError.
+    """
+
+    potion = None
+    symptom = None
+    quantity = None
+    budget = None
 
     def __init__(self, data):
         for key, value in data.items():

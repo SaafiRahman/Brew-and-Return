@@ -54,7 +54,7 @@ export interface Receipt {
 
 export type LedgerEntry =
   | { type: 'receipt'; receipt: Receipt }
-  | { type: 'message'; id: number; tick: number; text: string; tone: 'info' | 'reward' | 'warn' };
+  | { type: 'message'; id: number; tick: number; text: string; tone: 'info' | 'reward' | 'warn'; detail?: string };
 
 export interface GameState {
   version: 1;

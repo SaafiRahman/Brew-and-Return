@@ -1,7 +1,8 @@
 import { render } from 'preact';
+import { Controller } from './app/controller';
+import { App } from './ui/App';
+import './styles.css';
 
-function App() {
-  return <h1>Brew &amp; Return — warming up the cauldron…</h1>;
-}
-
-render(<App />, document.getElementById('app')!);
+const ctl = new Controller();
+render(<App ctl={ctl} />, document.getElementById('app')!);
+void ctl.start();

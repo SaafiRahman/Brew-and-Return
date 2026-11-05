@@ -62,9 +62,16 @@ describe('python harness', () => {
     expect(call({}).value).toBe('kept');
   });
 
-  it('explains missing attributes on the order', () => {
-    setCode(spell('def serve(order):', '    return order.potion'));
-    expect(call({ symptom: 'cough' })).toMatchObject({ errorType: 'AttributeError', message: "'Order' object has no attribute 'potion'" });
+  it('reads known fields the customer did not mention as None', () => {
+    setCode(spell('def serve(order):', '    if order.symptom == "cough":', '        return "honey potion"', '    return order.potion'));
+    expect(call({ potion: 'mana potion' }).value).toBe('mana potion');
+    expect(call({ symptom: 'cough' }).value).toBe('honey potion');
+    expect(call({ symptom: 'fever' }).value).toBeNull();
+  });
+
+  it('still reports misspelled order fields', () => {
+    setCode(spell('def serve(order):', '    return order.potoin'));
+    expect(call({ potion: 'mana potion' })).toMatchObject({ errorType: 'AttributeError', message: "'Order' object has no attribute 'potoin'" });
   });
 
   it('turns tuples into lists and None into null', () => {

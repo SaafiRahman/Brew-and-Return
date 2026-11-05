@@ -34,6 +34,10 @@ describe('judge', () => {
     expect(judge(knight, ok('luck potion')).hint).toMatch(/list/);
   });
 
+  it('explains an empty order.potion for symptom orders', () => {
+    expect(judge(healer, ok(null)).hint).toMatch(/`order.symptom` instead/);
+  });
+
   it('notices when the symptom is handed back', () => {
     expect(judge(healer, ok('headache')).hint).toMatch(/That's the symptom/);
   });

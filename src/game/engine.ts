@@ -186,6 +186,7 @@ export function serveFront(s: GameState, result: CallResult): Receipt | undefine
       s.open = false;
     } else {
       s.failStreak++;
+      if (j.verdict === 'timeout') s.open = false; // don't keep waking a sleeping apprentice
       receipt.repDelta = -Math.min(3, s.reputation - REP_MIN);
       s.reputation += receipt.repDelta;
       if (s.failStreak >= FAIL_STREAK_PAUSE) {
@@ -203,7 +204,9 @@ export function serveFront(s: GameState, result: CallResult): Receipt | undefine
   if (!s.open && j.verdict !== 'correct') {
     message(s, c.teaser
       ? 'A new kind of customer! The shop paused so you can read the receipt and update your spell.'
-      : 'Your apprentice is muddled, so the shop closed for a moment. Fix the spell and press Open Shop.', 'warn');
+      : j.verdict === 'timeout'
+        ? 'The shop closed while your apprentice naps. Fix the loop and press Open Shop.'
+        : 'Your apprentice is muddled, so the shop closed for a moment. Fix the spell and press Open Shop.', 'warn');
   }
   checkAdvance(s);
   return receipt;
@@ -300,8 +303,8 @@ function addAvailable(s: GameState, page: PageId): void {
   if (!s.availablePages.includes(page)) s.availablePages.push(page);
 }
 
-export function message(s: GameState, text: string, tone: 'info' | 'reward' | 'warn' = 'info'): void {
-  log(s, { type: 'message', id: s.nextId++, tick: s.tick, text, tone });
+export function message(s: GameState, text: string, tone: 'info' | 'reward' | 'warn' = 'info', detail?: string): void {
+  log(s, { type: 'message', id: s.nextId++, tick: s.tick, text, tone, detail });
 }
 
 function log(s: GameState, entry: LedgerEntry): void {

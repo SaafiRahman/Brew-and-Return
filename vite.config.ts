@@ -6,6 +6,7 @@ export default defineConfig({
   base: process.env.GITHUB_ACTIONS ? '/Brew-and-Return/' : '/',
   plugins: [preact()],
   worker: { format: 'es' },
+  build: { chunkSizeWarningLimit: 700 },
   test: {
     include: ['tests/**/*.test.ts'],
   },

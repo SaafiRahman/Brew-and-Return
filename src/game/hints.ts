@@ -119,7 +119,11 @@ export function explainWrong(customer: Pick<Customer, 'kind' | 'order' | 'expect
   const { expected, order } = customer;
 
   if (got === null) {
-    return 'Your apprentice stood there holding nothing. Did you forget to `return` something?';
+    const base = 'Your apprentice stood there holding nothing. Did you forget to `return` something?';
+    if (order.symptom !== undefined && order.potion === undefined) {
+      return `${base} This customer didn't name a potion, so \`order.potion\` is empty. They told you \`order.symptom\` instead.`;
+    }
+    return base;
   }
   if (isUnserializable(got)) {
     return `Your apprentice tried to hand over ${article(friendlyType(got.__type__ as string))}. Customers only accept potions: text in quotes, like \`"health potion"\`.`;
