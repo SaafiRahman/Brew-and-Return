@@ -174,7 +174,7 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
     id: 'sign',
     title: 'Shop Sign',
     emoji: '🪧',
-    costs: [15, 45, 120],
+    costs: [15, 50, 150],
     describe: (lvl) =>
       lvl === 0 ? 'Draws more foot traffic.' : `Customers arrive ${Math.round((1 / SIGN_FACTOR ** lvl - 1) * 100)}% more often.`,
   },
@@ -182,7 +182,7 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
     id: 'tipjar',
     title: 'Tip Jar',
     emoji: '🫙',
-    costs: [25, 70, 150],
+    costs: [25, 80, 200],
     describe: (lvl) =>
       lvl === 0 ? 'Happy customers might leave a tip.' : `Happy customers tip more often, up to ${1 + lvl} coins.`,
   },

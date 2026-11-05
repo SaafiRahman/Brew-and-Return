@@ -492,19 +492,35 @@ pre {
   background: linear-gradient(var(--wood-light), var(--wood) 30%, var(--wood-dark));
   display: flex;
   align-items: center;
-  padding-left: 28px;
+  justify-content: center;
 }
 .cauldron {
-  font-size: 30px;
-  transform: translateY(-18px);
-  display: inline-block;
+  transform: translateY(-30px);
+  overflow: visible;
 }
-.cauldron.bubbling {
-  animation: wobble 400ms ease-in-out infinite;
+.c-bubble {
+  fill: var(--teal);
+  opacity: 0;
 }
-@keyframes wobble {
-  50% {
-    transform: translateY(-20px) rotate(-4deg);
+.cauldron.bubbling .c-bubble {
+  animation: c-rise 700ms ease-in infinite;
+}
+.cauldron.bubbling .cb2 {
+  animation-delay: 230ms;
+  fill: var(--gold);
+}
+.cauldron.bubbling .cb3 {
+  animation-delay: 460ms;
+  fill: var(--plum);
+}
+@keyframes c-rise {
+  from {
+    opacity: 0.9;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-10px);
   }
 }
 
@@ -929,4 +945,35 @@ details summary {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.btn.danger {
+  background: var(--berry);
+  border-color: #8f3c35;
+  color: #fff;
+}
+.btn.danger:hover:not(:disabled) {
+  background: #9c443d;
+  border-color: #8f3c35;
+}
+.confirm {
+  border: 4px solid var(--wood-dark);
+  border-radius: 14px;
+  background: var(--parchment-light);
+  color: var(--ink);
+  max-width: 400px;
+  padding: 20px 24px;
+}
+.confirm::backdrop {
+  background: rgba(59, 42, 26, 0.45);
+}
+.confirm h2 {
+  font-family: var(--font-display);
+  margin: 0 0 8px;
+}
+.confirm-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
 }

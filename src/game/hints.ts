@@ -121,7 +121,7 @@ export function explainWrong(customer: Pick<Customer, 'kind' | 'order' | 'expect
   if (got === null) {
     const base = 'Your apprentice stood there holding nothing. Did you forget to `return` something?';
     if (order.symptom !== undefined && order.potion === undefined) {
-      return `${base} This customer didn't name a potion, so \`order.potion\` is empty. They told you \`order.symptom\` instead.`;
+      return `Your apprentice had nothing to hand over for "${order.symptom}". Does your spell cover every symptom on the chalkboard? (Healers don't name a potion, so \`order.potion\` is \`None\` for them.)`;
     }
     return base;
   }

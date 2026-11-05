@@ -35,7 +35,7 @@ describe('judge', () => {
   });
 
   it('explains an empty order.potion for symptom orders', () => {
-    expect(judge(healer, ok(null)).hint).toMatch(/`order.symptom` instead/);
+    expect(judge(healer, ok(null)).hint).toMatch(/nothing to hand over for "headache".*chalkboard/);
   });
 
   it('notices when the symptom is handed back', () => {

@@ -57,7 +57,7 @@ export function ShopScene({ ctl }: { ctl: Controller }) {
         </div>
 
         <div class="counter-top">
-          <span class={`cauldron ${counter?.phase === 'brewing' ? 'bubbling' : ''}`} aria-hidden="true">🫕</span>
+          <Cauldron brewing={counter?.phase === 'brewing'} />
         </div>
       </div>
 
@@ -89,6 +89,21 @@ export function ShopScene({ ctl }: { ctl: Controller }) {
         })}
       </div>
     </section>
+  );
+}
+
+function Cauldron({ brewing }: { brewing: boolean }) {
+  return (
+    <svg class={`cauldron ${brewing ? 'bubbling' : ''}`} width="64" height="56" viewBox="0 0 64 56" aria-hidden="true">
+      <circle class="c-bubble cb1" cx="24" cy="14" r="4" />
+      <circle class="c-bubble cb2" cx="36" cy="10" r="3" />
+      <circle class="c-bubble cb3" cx="42" cy="16" r="2.5" />
+      <ellipse cx="32" cy="22" rx="24" ry="6" fill="var(--teal)" />
+      <path d="M8 22 Q6 50 32 52 Q58 50 56 22 Z" fill="#3a2e28" />
+      <ellipse cx="32" cy="22" rx="26" ry="5" fill="none" stroke="#2a211c" stroke-width="4" />
+      <path d="M16 51 l-4 4 M48 51 l4 4" stroke="#2a211c" stroke-width="4" stroke-linecap="round" />
+      <path d="M16 30 Q14 42 24 46" stroke="rgba(255,255,255,0.15)" stroke-width="3" fill="none" stroke-linecap="round" />
+    </svg>
   );
 }
 

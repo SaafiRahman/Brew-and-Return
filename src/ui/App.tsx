@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useGame, type Controller } from '../app/controller';
 import { PAGES } from '../game/content';
 import { REP_MAX } from '../game/engine';
@@ -16,11 +16,12 @@ export function App({ ctl }: { ctl: Controller }) {
   const [editorKey, setEditorKey] = useState(0);
   const canAffordNewPage = s.availablePages.some((p) => !s.pages.includes(p) && s.coins >= PAGES[p].cost);
 
+  const [confirmReset, setConfirmReset] = useState(false);
+  const unreadPage = s.availablePages.find((p) => !s.pages.includes(p));
   const reset = () => {
-    if (confirm('Start over from the very first customer? Your coins, pages and spell will be forgotten.')) {
-      ctl.reset();
-      setEditorKey((k) => k + 1);
-    }
+    setConfirmReset(false);
+    ctl.reset();
+    setEditorKey((k) => k + 1);
   };
 
   return (
@@ -39,10 +40,10 @@ export function App({ ctl }: { ctl: Controller }) {
           </span>
         </div>
         <div class="spacer" />
-        <button class={`btn book ${canAffordNewPage ? 'glow' : ''}`} onClick={() => (ctl.spellbookOpen.value = s.pages[s.pages.length - 1])}>
+        <button class={`btn book ${canAffordNewPage ? 'glow' : ''}`} onClick={() => (ctl.spellbookOpen.value = unreadPage ?? s.pages[s.pages.length - 1])}>
           📖 Spellbook
         </button>
-        <button class="btn ghost" onClick={reset} title="Start a new game">
+        <button class="btn ghost" onClick={() => setConfirmReset(true)} title="Start a new game">
           Start over
         </button>
       </header>
@@ -54,6 +55,7 @@ export function App({ ctl }: { ctl: Controller }) {
       </main>
 
       <Spellbook ctl={ctl} />
+      {confirmReset && <ConfirmReset onYes={reset} onNo={() => setConfirmReset(false)} />}
       {!ctl.runnerReady.value && <LoadingScreen text={ctl.runnerStatus.value} />}
     </div>
   );
@@ -154,6 +156,25 @@ function ApprenticeNote({ ctl }: { ctl: Controller }) {
         </div>
       )}
     </div>
+  );
+}
+
+function ConfirmReset({ onYes, onNo }: { onYes(): void; onNo(): void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => ref.current?.showModal(), []);
+  return (
+    <dialog ref={ref} class="confirm" onClose={onNo} aria-labelledby="confirm-title">
+      <h2 id="confirm-title">Start over?</h2>
+      <p>Old Maggie will be back at the counter, and your coins, Spellbook pages and spell will be forgotten.</p>
+      <div class="confirm-row">
+        <button class="btn" onClick={onNo} autofocus>
+          Keep my shop
+        </button>
+        <button class="btn danger" onClick={onYes}>
+          Start over
+        </button>
+      </div>
+    </dialog>
   );
 }
 
