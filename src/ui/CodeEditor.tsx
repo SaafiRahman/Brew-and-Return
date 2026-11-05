@@ -1,4 +1,5 @@
-import { python } from '@codemirror/lang-python';
+import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
+import { python, pythonLanguage } from '@codemirror/lang-python';
 import { HighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
 import { indentWithTab } from '@codemirror/commands';
 import { Decoration, EditorView, keymap, type DecorationSet } from '@codemirror/view';
@@ -29,6 +30,11 @@ const cozyTheme = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
   '.cm-cursor': { borderLeftColor: 'var(--wood-dark)', borderLeftWidth: '2px' },
   '.cm-tooltip': { backgroundColor: 'var(--parchment)', border: '1px solid var(--line)' },
+  '.cm-tooltip-autocomplete ul li': { padding: '2px 8px !important' },
+  '.cm-tooltip-autocomplete ul li[aria-selected]': { backgroundColor: 'var(--wood)', color: 'var(--parchment)' },
+  '.cm-completionDetail': { color: 'var(--ink-faint)', fontStyle: 'normal', marginLeft: '10px' },
+  '.cm-tooltip-autocomplete ul li[aria-selected] .cm-completionDetail': { color: 'var(--parchment-deep)' },
+  '.cm-completionInfo': { backgroundColor: 'var(--paper)', border: '1px solid var(--line)', padding: '4px 8px', maxWidth: '260px' },
   '.cm-running-line': { backgroundColor: 'var(--running-line)', boxShadow: 'inset 3px 0 0 var(--gold)' },
 });
 
@@ -50,19 +56,53 @@ const runningLine = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
+/** What the spell can use right now, for autocomplete. */
+export interface SpellVocabulary {
+  /** Potions the player has learned, e.g. [{ id: 'health', price: 3 }]. */
+  potions: { id: string; price: number }[];
+}
+
+const COMMANDS: Completion[] = [
+  { label: 'brew', type: 'function', detail: '(potion)', info: 'Walk to the cauldron and brew a potion, like brew(Potion.health).' },
+  { label: 'serve', type: 'function', detail: '()', info: "Walk to the counter and hand over the potion you're holding." },
+  { label: 'order', type: 'function', detail: '()', info: 'Find out which potion the customer at the counter wants.' },
+  { label: 'Potion', type: 'class', info: 'Every potion you know. Type a dot after it to see them.' },
+  { label: 'print', type: 'function', detail: '(…)', info: 'Your apprentice says something out loud.' },
+];
+
+/** Suggest the game's commands, and learned potions after `Potion.` */
+function spellCompletions(vocab: () => SpellVocabulary) {
+  return (ctx: CompletionContext): CompletionResult | null => {
+    const dotted = ctx.matchBefore(/\bPotion\.\w*/);
+    if (dotted) {
+      return {
+        from: dotted.from + 'Potion.'.length,
+        options: vocab().potions.map((p) => ({ label: p.id, type: 'constant', detail: `sells for ${p.price} 🪙` })),
+        validFor: /^\w*$/,
+      };
+    }
+    const word = ctx.matchBefore(/\w+/);
+    if (!word || (word.from === word.to && !ctx.explicit)) return null;
+    // Not after a dot (that's some other object's attribute).
+    if (word.from > 0 && ctx.state.sliceDoc(word.from - 1, word.from) === '.') return null;
+    return { from: word.from, options: COMMANDS, validFor: /^\w*$/ };
+  };
+}
+
 interface Props {
   initial: string;
+  vocabulary(): SpellVocabulary;
   activeLine: number | null;
   onChange(code: string): void;
   /** Ctrl/Cmd+Enter. */
   onRun(): void;
 }
 
-export function CodeEditor({ initial, activeLine, onChange, onRun }: Props) {
+export function CodeEditor({ initial, activeLine, vocabulary, onChange, onRun }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
-  const handlers = useRef({ onChange, onRun });
-  handlers.current = { onChange, onRun };
+  const handlers = useRef({ onChange, onRun, vocabulary });
+  handlers.current = { onChange, onRun, vocabulary };
 
   useEffect(() => {
     const v = new EditorView({
@@ -71,6 +111,7 @@ export function CodeEditor({ initial, activeLine, onChange, onRun }: Props) {
       extensions: [
         basicSetup,
         python(),
+        pythonLanguage.data.of({ autocomplete: spellCompletions(() => handlers.current.vocabulary()) }),
         indentUnit.of('    '),
         keymap.of([indentWithTab]),
         Prec.highest(keymap.of([{ key: 'Mod-Enter', run: () => (handlers.current.onRun(), true) }])),

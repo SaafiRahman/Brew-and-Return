@@ -1,4 +1,4 @@
-import { POTIONS, SHOP, WALK_TIME } from '../game/content';
+import { POTIONS, potionCode, potionName, SHOP, WALK_TIME } from '../game/content';
 import { itemCost } from '../game/world';
 import type { Customer, PageId, PotionId } from '../game/types';
 import { useWorld, type Controller } from '../app/controller';
@@ -52,7 +52,7 @@ export function ShopScene({ ctl }: { ctl: Controller }) {
 
           <div class="queue" aria-label={`${waiting.length} more customers waiting in line`}>
             {waiting.map((c) => (
-              <div class="customer waiting" key={c.id} title={`${c.name} wants a ${c.wants}`}>
+              <div class="customer waiting" key={c.id} title={`${c.name} wants a ${potionName(c.wants)}`}>
                 <span class="mini-want">
                   <Potion id={c.wants} size={11} />
                 </span>
@@ -75,7 +75,7 @@ function FrontCustomer({ c }: { c: Customer }) {
     <div class="front-customer" key={c.id}>
       <div class={`want ${c.wrongTries ? 'shake' : ''}`} key={`${c.id}-${c.wrongTries}`}>
         <Potion id={c.wants} size={20} />
-        <span>{c.wants}</span>
+        <span title={potionCode(c.wants)}>{potionName(c.wants)}</span>
       </div>
       <span class="customer-emoji">{c.emoji}</span>
       <div class="customer-name">

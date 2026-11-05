@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useWorld, type Controller } from '../app/controller';
-import { SHOP } from '../game/content';
+import { knownPotions, POTIONS, SHOP } from '../game/content';
 import { itemCost } from '../game/world';
 import type { LedgerEntry } from '../game/types';
 import { CodeEditor } from './CodeEditor';
@@ -70,7 +70,13 @@ function EditorPanel({ ctl }: { ctl: Controller }) {
         <span class="muted">Your apprentice follows it line by line.</span>
       </header>
       <div class={`editor-wrap ${running ? 'is-running' : ''}`}>
-        <CodeEditor initial={w.code} activeLine={running ? line : null} onChange={(c) => ctl.setCode(c)} onRun={toggle} />
+        <CodeEditor
+          initial={w.code}
+          activeLine={running ? line : null}
+          vocabulary={() => ({ potions: knownPotions(ctl.world).map((id) => ({ id, price: POTIONS[id].price })) })}
+          onChange={(c) => ctl.setCode(c)}
+          onRun={toggle}
+        />
       </div>
 
       <LatestWarning ctl={ctl} />

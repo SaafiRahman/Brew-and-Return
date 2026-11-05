@@ -1,7 +1,7 @@
 /** Plain JSON data: the only thing that crosses the game ↔ code-runner boundary. */
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
-export type PotionId = 'health potion' | 'mana potion';
+export type PotionId = 'health' | 'mana';
 export type Spot = 'cauldron' | 'counter';
 export type PageId = 'first' | 'repeat' | 'choices';
 export type ShopItemId = 'page:repeat' | 'page:choices' | 'recipe:mana' | 'cauldron';
@@ -64,7 +64,7 @@ export interface LedgerEntry {
 }
 
 export interface World {
-  version: 2;
+  version: 3;
   /** Game seconds. Only advances while the shop is open (a spell is running). */
   time: number;
   coins: number;

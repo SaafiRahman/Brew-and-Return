@@ -4,6 +4,9 @@ import { explainError, similar } from '../src/game/hints';
 import { addCustomer, advance, applyDiscoveries, beginAction, buy, closeShop, createWorld, openShop } from '../src/game/world';
 import type { Json, World } from '../src/game/types';
 
+/** Potions as the runner sends them (Potion.health in Python). */
+const P = { health: { potion: 'health' }, mana: { potion: 'mana' } } as const;
+
 const DT = 0.05;
 
 /** Perform one action to completion, like a spell would. Returns the result, or throws the action's error. */
@@ -28,7 +31,7 @@ function loop(w: World, seconds: number, body: (w: World) => void) {
 }
 
 const healthLoop = (w: World) => {
-  act(w, 'brew', 'health potion');
+  act(w, 'brew', P.health);
   act(w, 'serve');
 };
 const smartLoop = (w: World) => {
@@ -41,7 +44,7 @@ describe('a new shop', () => {
     const w = createWorld(1);
     expect(w.open).toBe(false);
     expect(w.queue).toHaveLength(1);
-    expect(w.queue[0].wants).toBe('health potion');
+    expect(w.queue[0].wants).toBe('health');
     expect(w.code).toBe(STARTER_CODE);
   });
 
@@ -54,10 +57,10 @@ describe('a new shop', () => {
 
   it('the starter spell earns the first coins within seconds, with a quick-service tip', () => {
     const w = running();
-    act(w, 'brew', 'health potion');
-    expect(w.apprentice.holding).toBe('health potion');
+    act(w, 'brew', P.health);
+    expect(w.apprentice.holding).toBe('health');
     expect(act(w, 'serve')).toBe(true);
-    expect(w.coins).toBe(POTIONS['health potion'].price + 1);
+    expect(w.coins).toBe(POTIONS.health.price + 1);
     expect(w.time).toBeLessThan(5);
     expect(w.stats.served).toBe(1);
   });
@@ -68,23 +71,24 @@ describe('actions', () => {
     const w = running();
     w.apprentice.spot = 'counter';
     const t0 = w.time;
-    act(w, 'brew', 'Health  Potion ');
+    act(w, 'brew', P.health);
     expect(w.time - t0).toBeGreaterThanOrEqual(2.6 - 1e-9);
     expect(w.apprentice.spot).toBe('cauldron');
   });
 
-  it('brew rejects unknown or unlearned potions with a friendly error', () => {
+  it('brew explains strings, unlearned recipes and missing potions kindly', () => {
     const w = running();
-    expect(() => act(w, 'brew', 'helth potion')).toThrow(/doesn't know a potion called "helth potion".*"health potion"/);
-    expect(() => act(w, 'brew', 'mana potion')).toThrow(/haven't learned the mana potion recipe/);
-    expect(() => act(w, 'brew')).toThrow(/needs the name of a potion/);
+    expect(() => act(w, 'brew', 'health potion')).toThrow(/"health potion" is just words.*`Potion.health`/);
+    expect(() => act(w, 'brew', P.mana)).toThrow(/haven't learned the mana potion recipe/);
+    expect(() => act(w, 'brew')).toThrow(/needs to know which potion/);
+    expect(() => act(w, 'brew', 3)).toThrow(/can only brew potions/);
   });
 
   it('brewing with full hands just makes the apprentice shrug', () => {
     const w = running();
-    act(w, 'brew', 'health potion');
-    expect(act(w, 'brew', 'health potion')).toBe(false);
-    expect(w.apprentice.holding).toBe('health potion');
+    act(w, 'brew', P.health);
+    expect(act(w, 'brew', P.health)).toBe(false);
+    expect(w.apprentice.holding).toBe('health');
   });
 
   it('serving with empty hands is a shrug, not an error', () => {
@@ -95,10 +99,10 @@ describe('actions', () => {
   it('serve waits at the counter for the next customer', () => {
     const w = running();
     w.spawnTimer = 6;
-    act(w, 'brew', 'health potion');
+    act(w, 'brew', P.health);
     act(w, 'serve');
     expect(w.queue).toHaveLength(0);
-    act(w, 'brew', 'health potion');
+    act(w, 'brew', P.health);
     const t0 = w.time;
     expect(act(w, 'serve')).toBe(true);
     expect(w.time).toBeGreaterThan(t0);
@@ -107,7 +111,7 @@ describe('actions', () => {
 
   it('order tells you what the customer at the counter wants', () => {
     const w = running();
-    expect(act(w, 'order')).toBe('health potion');
+    expect(act(w, 'order')).toEqual(P.health);
     expect(w.apprentice.spot).toBe('counter');
   });
 
@@ -122,7 +126,7 @@ describe('customers', () => {
   it('someone is always waiting when a spell ends', () => {
     const w = running();
     w.spawnTimer = 100;
-    act(w, 'brew', 'health potion');
+    act(w, 'brew', P.health);
     act(w, 'serve');
     expect(w.queue).toHaveLength(0);
     closeShop(w);
@@ -134,15 +138,15 @@ describe('customers', () => {
     buy(Object.assign(w, { coins: 100 }), 'page:repeat');
     buy(w, 'recipe:mana');
     w.queue = [];
-    addCustomer(w, 'mana potion');
+    addCustomer(w, 'mana');
     const coins = w.coins;
-    act(w, 'brew', 'health potion');
+    act(w, 'brew', P.health);
     expect(act(w, 'serve')).toBe(false);
     expect(w.queue[0].wrongTries).toBe(1);
     expect(w.apprentice.holding).toBeNull(); // the rejected potion is wasted
-    act(w, 'brew', 'mana potion');
+    act(w, 'brew', P.mana);
     expect(act(w, 'serve')).toBe(true);
-    expect(w.coins - coins).toBe(POTIONS['mana potion'].price / 2);
+    expect(w.coins - coins).toBe(POTIONS.mana.price / 2);
   });
 
   it('leave when their patience runs out', () => {
@@ -165,10 +169,10 @@ describe('customers', () => {
   it('only want mana potions once the recipe is known', () => {
     const w = running(7);
     for (let i = 0; i < 30; i++) addCustomer(w);
-    expect(w.queue.every((c) => c.wants === 'health potion')).toBe(true);
+    expect(w.queue.every((c) => c.wants === 'health')).toBe(true);
     w.owned.push('recipe:mana');
     for (let i = 0; i < 30; i++) addCustomer(w);
-    expect(w.queue.some((c) => c.wants === 'mana potion')).toBe(true);
+    expect(w.queue.some((c) => c.wants === 'mana')).toBe(true);
   });
 });
 
@@ -220,7 +224,7 @@ describe('shop', () => {
     w.coins = 50;
     expect(buy(w, 'cauldron')).toBe(true);
     const t0 = w.time;
-    act(w, 'brew', 'health potion');
+    act(w, 'brew', P.health);
     expect(w.time - t0).toBeLessThan(1.7);
   });
 
@@ -236,7 +240,8 @@ describe('hints', () => {
   it.each([
     [{ errorType: 'NameError', message: "name 'brw' is not defined", line: 2 }, /Did you mean `brew`/],
     [{ errorType: 'NameError', message: "name 'sevre' is not defined" }, /Did you mean `serve`/],
-    [{ errorType: 'NameError', message: "name 'health' is not defined" }, /wrap it in quotes/],
+    [{ errorType: 'NameError', message: "name 'health' is not defined" }, /`Potion.health`/],
+    [{ errorType: 'NameError', message: "name 'potion' is not defined" }, /capital P/],
     [{ errorType: 'NameError', message: "name 'true' is not defined" }, /`True`/],
     [{ errorType: 'TypeError', message: "brew() missing 1 required positional argument: 'potion'" }, /which potion/],
     [{ errorType: 'TypeError', message: 'serve() takes 0 positional arguments but 1 was given' }, /doesn't need anything/],

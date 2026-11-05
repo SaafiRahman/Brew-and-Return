@@ -2,7 +2,7 @@ import { createWorld } from './world';
 import type { World } from './types';
 
 export const SAVE_KEY = 'brew-and-return/save';
-export const CURRENT_VERSION = 2;
+export const CURRENT_VERSION = 3;
 
 /** Minimal storage interface so saves can be tested without a browser. */
 export interface KeyValueStore {
@@ -16,7 +16,22 @@ export interface KeyValueStore {
  * shape, and bump CURRENT_VERSION. Version 1 was the old serve(order) prototype,
  * which can't be carried over, so it has no migration and starts fresh.
  */
-const MIGRATIONS: Record<number, (old: any) => any> = {};
+const MIGRATIONS: Record<number, (old: any) => any> = {
+  // v3: potions became objects (Potion.health) instead of strings ("health potion").
+  2: (old) => {
+    const id = (p: unknown) => (typeof p === 'string' ? p.replace(/ potion$/, '') : p);
+    const code = typeof old.code === 'string'
+      ? old.code.replace(/(["'])(health|mana) potion\1/g, (_: string, _q: string, name: string) => `Potion.${name}`)
+      : old.code;
+    return {
+      ...old,
+      version: 3,
+      code,
+      queue: (old.queue ?? []).map((c: any) => ({ ...c, wants: id(c.wants) })),
+      apprentice: { ...old.apprentice, holding: id(old.apprentice?.holding) ?? null },
+    };
+  },
+};
 
 export function serialize(w: World): string {
   const { open: _open, task: _task, ...rest } = w;

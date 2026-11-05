@@ -9,7 +9,7 @@ export interface ErrorInfo {
   line?: number;
 }
 
-const POTION_WORDS = ['health', 'mana', 'potion'];
+const POTION_IDS = ['health', 'mana'];
 const COMMANDS = ['brew', 'serve', 'order'];
 
 const onLine = (line?: number) => (line ? ` on line ${line}` : '');
@@ -30,8 +30,11 @@ export function explainError(err: ErrorInfo): string {
     if (name === 'true' || name === 'false') {
       return `Python spells it with a capital letter: \`${name[0].toUpperCase() + name.slice(1)}\`${onLine(line)}.`;
     }
-    if (name && POTION_WORDS.includes(name.toLowerCase())) {
-      return `Your apprentice doesn't know a command called \`${name}\`${onLine(line)}. If you meant a potion's name, wrap it in quotes, like \`"${name} potion"\`.`;
+    if (name?.toLowerCase() === 'potion' || name?.toLowerCase() === 'potions') {
+      return `Did you mean \`Potion\`${onLine(line)}? It starts with a capital P.`;
+    }
+    if (name && POTION_IDS.includes(name.toLowerCase())) {
+      return `Did you mean \`Potion.${name.toLowerCase()}\`${onLine(line)}? Potions live in the Potion list.`;
     }
     if (name) {
       const close = COMMANDS.find((c) => similar(c, name));
@@ -42,7 +45,7 @@ export function explainError(err: ErrorInfo): string {
 
   if (errorType === 'TypeError') {
     const takes = /(\w+)\(\) (missing|takes)/.exec(message);
-    if (takes?.[1] === 'brew') return `\`brew\` needs to know which potion${onLine(line)}, like \`brew("health potion")\`.`;
+    if (takes?.[1] === 'brew') return `\`brew\` needs to know which potion${onLine(line)}, like \`brew(Potion.health)\`.`;
     if (takes && (takes[1] === 'serve' || takes[1] === 'order')) {
       return `\`${takes[1]}()\` doesn't need anything in its brackets${onLine(line)}.`;
     }

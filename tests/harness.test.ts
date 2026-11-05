@@ -54,7 +54,7 @@ describe('python harness', () => {
   });
 
   it('runs the starter spell and earns the first coins', () => {
-    const out = run(spell('# comment', 'brew("health potion")', 'serve()'));
+    const out = run(spell('# comment', 'brew(Potion.health)', 'serve()'));
     expect(out).toEqual({ kind: 'finished' });
     expect(actions).toEqual([
       { name: 'brew', line: 2 },
@@ -64,7 +64,7 @@ describe('python harness', () => {
   });
 
   it('a while True loop keeps serving until stopped', () => {
-    const out = run(spell('while True:', '    brew("health potion")', '    serve()'), { limit: 20 });
+    const out = run(spell('while True:', '    brew(Potion.health)', '    serve()'), { limit: 20 });
     expect(out).toEqual({ kind: 'stopped' });
     expect(world.stats.served).toBeGreaterThanOrEqual(9);
     expect(features).toEqual(['while']);
@@ -72,7 +72,7 @@ describe('python harness', () => {
 
   it('order() and if let the apprentice serve wizards', () => {
     const out = run(
-      spell('while True:', '    if order() == "mana potion":', '        brew("mana potion")', '    else:', '        brew("health potion")', '    serve()'),
+      spell('while True:', '    if order() == Potion.mana:', '        brew(Potion.mana)', '    else:', '        brew(Potion.health)', '    serve()'),
       {
         limit: 60,
         setup: (w) => {
@@ -89,7 +89,7 @@ describe('python harness', () => {
   });
 
   it('turns shop problems into ShopError with the line number', () => {
-    const out = run(spell('brew("mana potion")'));
+    const out = run(spell('brew(Potion.mana)'));
     expect(out).toMatchObject({ kind: 'error', errorType: 'ShopError', line: 1 });
     expect(out.message).toMatch(/haven't learned the mana potion recipe/);
     expect(out.traceback).not.toMatch(/harness|_act/);
@@ -102,9 +102,26 @@ describe('python harness', () => {
   });
 
   it('reports runtime errors with the spell line', () => {
-    const out = run(spell('brew("health potion")', 'sevre()'));
+    const out = run(spell('brew(Potion.health)', 'sevre()'));
     expect(out).toMatchObject({ kind: 'error', errorType: 'NameError', line: 2 });
     expect(out.traceback).toContain('<your spell>');
+  });
+
+  it('Potion typos suggest the right name', () => {
+    const out = run(spell('brew(Potion.mna)'));
+    expect(out).toMatchObject({ kind: 'error', errorType: 'ShopError', line: 1 });
+    expect(out.message).toMatch(/no potion called Potion.mna. Did you mean Potion.mana\?/);
+  });
+
+  it('brewing a string explains Potion.health', () => {
+    const out = run(spell('brew("health potion")'));
+    expect(out).toMatchObject({ errorType: 'ShopError' });
+    expect(out.message).toMatch(/just words.*`Potion.health`/);
+  });
+
+  it('order() returns a Potion you can compare and print', () => {
+    run(spell('wanted = order()', 'print(wanted, wanted == Potion.health, wanted == Potion.mana)'));
+    expect(world.ledger.at(-1)!.text).toContain('Potion.health True False');
   });
 
   it('print() makes the apprentice talk', () => {
@@ -118,7 +135,7 @@ describe('python harness', () => {
   });
 
   it('detects concepts for discovery bonuses', () => {
-    run(spell('def go(p):', '    brew(p.lower().strip())', 'potions = [f"{1}"]', 'for p in ["health potion"]:', '    go(p)', 'd = {}'));
+    run(spell('def go(p):', '    print(p.lower().strip())', 'potions = [f"{1}"]', 'for p in ["hi"]:', '    go(p)', 'd = {}'));
     expect(features).toEqual(['dict', 'for', 'fstring', 'helper', 'list', 'method', 'variable']);
   });
 });

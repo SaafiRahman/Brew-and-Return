@@ -30,9 +30,14 @@ export interface PotionDef {
 }
 
 export const POTIONS: Record<PotionId, PotionDef> = {
-  'health potion': { id: 'health potion', price: 3, color: '#c4483f' },
-  'mana potion': { id: 'mana potion', price: 8, color: '#3d6fb8', recipe: 'recipe:mana' },
+  health: { id: 'health', price: 3, color: '#c4483f' },
+  mana: { id: 'mana', price: 8, color: '#3d6fb8', recipe: 'recipe:mana' },
 };
+
+/** What customers call it: "health potion". In code it's written `Potion.health`. */
+export const potionName = (id: PotionId) => `${id} potion`;
+/** How the player writes it in a spell. */
+export const potionCode = (id: PotionId) => `Potion.${id}`;
 
 /** Share of customers wanting mana once the recipe is known. */
 export const MANA_SHARE = 0.45;
@@ -73,7 +78,7 @@ export const SHOP: ShopItem[] = [
     id: 'recipe:mana',
     title: 'Mana Potion Recipe',
     emoji: '💧',
-    blurb: `Wizards will start visiting. They pay ${POTIONS['mana potion'].price} coins a potion!`,
+    blurb: `Adds Potion.mana. Wizards will start visiting, and they pay ${POTIONS.mana.price} coins a potion!`,
     cost: (w) => (w.owned.includes('recipe:mana') ? undefined : 25),
     visible: (w) => w.owned.includes('page:repeat'),
   },
@@ -112,9 +117,9 @@ export const PAGES: Record<PageId, PageDef> = {
     title: 'Your First Spell',
     body:
       'Your apprentice follows your spell one line at a time, from top to bottom. Press Run and watch them go.\n\n' +
-      '`brew("health potion")` walks to the cauldron and brews a potion. The words go in quotes so your apprentice knows they are a name, not a command.\n\n' +
+      '`brew(Potion.health)` walks to the cauldron and brews a health potion. `Potion.health` means "the health potion from the Potion list". Type `Potion.` in your spell to see every potion you know.\n\n' +
       "`serve()` walks to the counter and hands over the potion you're holding. If nobody is there yet, your apprentice waits for the next customer.",
-    example: 'brew("health potion")\nserve()',
+    example: 'brew(Potion.health)\nserve()',
   },
   repeat: {
     id: 'repeat',
@@ -123,16 +128,16 @@ export const PAGES: Record<PageId, PageDef> = {
       '`while True:` repeats the lines underneath it forever, so your apprentice keeps working until you press Stop.\n\n' +
       'The lines to repeat must be indented: pushed in with 4 spaces. Mind the colon `:` at the end of the `while` line.\n\n' +
       'Your shop stays open as long as your spell is running.',
-    example: 'while True:\n    brew("health potion")\n    serve()',
+    example: 'while True:\n    brew(Potion.health)\n    serve()',
   },
   choices: {
     id: 'choices',
     title: 'Choices',
     body:
-      '`order()` walks to the counter and tells you what the customer there wants, like `"mana potion"`.\n\n' +
+      '`order()` walks to the counter and tells you which potion the customer there wants, like `Potion.mana`.\n\n' +
       '`if` lets your apprentice decide. If the thing after `if` is true, the indented lines underneath run. Otherwise the lines under `else:` run.\n\n' +
       'Compare with `==` (two equals signs). One `=` stores a value; two `==` asks a question.',
-    example: 'while True:\n    if order() == "mana potion":\n        brew("mana potion")\n    else:\n        brew("health potion")\n    serve()',
+    example: 'while True:\n    if order() == Potion.mana:\n        brew(Potion.mana)\n    else:\n        brew(Potion.health)\n    serve()',
   },
 };
 
@@ -153,4 +158,4 @@ export const DISCOVERIES: Record<string, { label: string; bonus: number }> = {
   method: { label: 'a string method', bonus: 5 },
 };
 
-export const STARTER_CODE = '# Your apprentice follows these lines, top to bottom.\nbrew("health potion")\nserve()\n';
+export const STARTER_CODE = '# Your apprentice follows these lines, top to bottom.\nbrew(Potion.health)\nserve()\n';

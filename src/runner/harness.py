@@ -5,6 +5,7 @@
 # until the game has finished animating the action; in tests it runs the game
 # simulation directly. Everything crossing the bridge is a JSON string.
 import ast
+import difflib
 import json
 import sys
 import traceback
@@ -22,6 +23,77 @@ class ShopError(Exception):
 
 class SpellStopped(BaseException):
     """The player pressed Stop. BaseException so a bare `except:` can't swallow it… mostly."""
+
+
+class _PotionKind:
+    """One kind of potion, e.g. Potion.health."""
+
+    __slots__ = ("id",)
+
+    def __init__(self, id):
+        object.__setattr__(self, "id", id)
+
+    def __repr__(self):
+        return f"Potion.{self.id}"
+
+    __str__ = __repr__
+
+    def __eq__(self, other):
+        return isinstance(other, _PotionKind) and other.id == self.id
+
+    def __hash__(self):
+        return hash(("Potion", self.id))
+
+    def __setattr__(self, name, value):
+        raise ShopError("Potions can't be changed.")
+
+
+POTION_IDS = ["health", "mana"]
+
+
+class _PotionList:
+    """Every potion in the world. Write Potion.health, Potion.mana, …"""
+
+    def __init__(self):
+        for pid in POTION_IDS:
+            object.__setattr__(self, pid, _PotionKind(pid))
+
+    def __getattr__(self, name):
+        close = difflib.get_close_matches(name.lower(), POTION_IDS, n=1, cutoff=0.6)
+        hint = f" Did you mean Potion.{close[0]}?" if close else " Potions you can name: " + ", ".join(f"Potion.{p}" for p in POTION_IDS) + "."
+        raise ShopError(f"There's no potion called Potion.{name}.{hint}")
+
+    def __setattr__(self, name, value):
+        raise ShopError("The Potion list can't be changed.")
+
+    def __repr__(self):
+        return "Potion"
+
+    def __iter__(self):
+        return iter([getattr(self, p) for p in POTION_IDS])
+
+
+Potion = _PotionList()
+
+
+def _to_wire(value):
+    """Python value → JSON-able data for the game."""
+    if isinstance(value, _PotionKind):
+        return {"potion": value.id}
+    if isinstance(value, (list, tuple)):
+        return [_to_wire(v) for v in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return {"type": type(value).__name__}
+
+
+def _from_wire(value):
+    """Game data → Python value (potions come back as Potion.x)."""
+    if isinstance(value, dict) and set(value) == {"potion"}:
+        return getattr(Potion, value["potion"])
+    if isinstance(value, list):
+        return [_from_wire(v) for v in value]
+    return value
 
 
 def _features(tree):
@@ -62,16 +134,16 @@ def _spell_line():
 
 
 def _act(name, *args):
-    reply = json.loads(_shop.action(name, json.dumps(list(args)), _spell_line()))
+    reply = json.loads(_shop.action(name, json.dumps(_to_wire(list(args))), _spell_line()))
     if reply.get("stop"):
         raise SpellStopped()
     if "error" in reply:
         raise ShopError(reply["error"])
-    return reply.get("value")
+    return _from_wire(reply.get("value"))
 
 
 def brew(potion):
-    """Walk to the cauldron and brew a potion, e.g. brew("health potion")."""
+    """Walk to the cauldron and brew a potion, e.g. brew(Potion.health)."""
     return _act("brew", potion)
 
 
@@ -81,15 +153,13 @@ def serve():
 
 
 def order():
-    """Walk to the counter and find out what the customer wants, e.g. "mana potion"."""
+    """Walk to the counter and find out which potion the customer wants, e.g. Potion.mana."""
     return _act("order")
 
 
 def say(*things, sep=" ", end="\n", file=None, flush=False):
     """print() makes your apprentice say something."""
-    words = []
-    for t in things:
-        words.append(t if isinstance(t, str) else repr(t))
+    words = [str(t) for t in things]
     return _act("say", sep.join(words))
 
 
@@ -116,7 +186,7 @@ def run_spell(source):
         return json.dumps({"kind": "error", **_error(e)})
 
     _shop.loaded(json.dumps(_features(tree)))
-    ns = {"__name__": "__spell__", "brew": brew, "serve": serve, "order": order, "print": say}
+    ns = {"__name__": "__spell__", "brew": brew, "serve": serve, "order": order, "print": say, "Potion": Potion}
     try:
         exec(code, ns)
     except (SpellStopped, KeyboardInterrupt):

@@ -7,6 +7,8 @@ import {
   FIRST_SPAWN,
   HANDOVER_TIME,
   knownPotions,
+  potionCode,
+  potionName,
   MANA_SHARE,
   MAX_QUEUE,
   PATIENCE,
@@ -27,7 +29,7 @@ export const LEDGER_CAP = 80;
 
 export function createWorld(seed = Date.now()): World {
   const w: World = {
-    version: 2,
+    version: 3,
     time: 0,
     coins: 0,
     lifetimeCoins: 0,
@@ -48,7 +50,7 @@ export function createWorld(seed = Date.now()): World {
     task: null,
   };
   // The very first customer is already waiting and wants the simplest thing.
-  addCustomer(w, 'health potion');
+  addCustomer(w, 'health');
   log(w, 'Welcome to your potion shop! A customer is waiting. Press Run to cast your first spell.', 'info');
   return w;
 }
@@ -78,7 +80,7 @@ function tickCustomers(w: World, dt: number) {
     if (front.patience <= 0) {
       w.queue.shift();
       w.stats.leftUnhappy++;
-      log(w, `${front.emoji} ${front.name} got tired of waiting and left without their ${front.wants}.`, 'warn');
+      log(w, `${front.emoji} ${front.name} got tired of waiting and left without their ${potionName(front.wants)}.`, 'warn');
       if (w.queue[0]) w.queue[0].atCounterSince = w.time;
     }
   }
@@ -87,7 +89,7 @@ function tickCustomers(w: World, dt: number) {
 export function addCustomer(w: World, wants?: PotionId): Customer {
   const known = knownPotions(w);
   const choice: PotionId =
-    wants ?? (known.includes('mana potion') && nextRandom(w) < MANA_SHARE ? 'mana potion' : 'health potion');
+    wants ?? (known.includes('mana') && nextRandom(w) < MANA_SHARE ? 'mana' : 'health');
   const c: Customer = {
     id: w.nextId++,
     name: pick(w, CUSTOMER_NAMES),
@@ -122,17 +124,17 @@ export function beginAction(w: World, action: string, args: Json[]): Task {
 
   switch (action) {
     case 'brew': {
-      if (args.length !== 1 || typeof args[0] !== 'string') {
-        return fail('brew needs the name of a potion in quotes, like brew("health potion").');
-      }
-      const name = args[0].trim().toLowerCase().replace(/\s+/g, ' ');
       const known = knownPotions(w);
-      if (!(name in POTIONS)) {
-        return fail(`Your apprentice doesn't know a potion called "${args[0]}". Recipes you know: ${known.map((p) => `"${p}"`).join(', ')}.`);
+      const examples = known.map((p) => `\`${potionCode(p)}\``).join(' or ');
+      if (args.length !== 1) return fail('brew needs to know which potion, like `brew(Potion.health)`.');
+      const arg = args[0];
+      if (typeof arg === 'string') {
+        return fail(`"${arg}" is just words to your apprentice. Name the potion from the Potion list instead, like ${examples}.`);
       }
-      const potion = name as PotionId;
+      const potion = asPotion(arg);
+      if (!potion) return fail(`Your apprentice can only brew potions, like ${examples}.`);
       if (!known.includes(potion)) {
-        return fail(`You haven't learned the ${potion} recipe yet. Buy it in the shop!`);
+        return fail(`You haven't learned the ${potionName(potion)} recipe yet. Buy it in the shop!`);
       }
       if (a.holding) {
         task.steps = [{ kind: 'say', text: 'My hands are full!', time: SHRUG_TIME, activity: 'shrugging', result: false }];
@@ -246,7 +248,7 @@ function finishStep(w: World, task: Task, step: Step) {
         task.steps.unshift({ kind: 'waitCustomer' }, step);
         return;
       }
-      task.result = c.wants;
+      task.result = potionJson(c.wants);
       break;
     }
     case 'handover': {
@@ -273,7 +275,7 @@ function handOver(w: World, c: Customer, potion: PotionId): boolean {
     earn(w, pay + tip);
     w.stats.served++;
     const extra = c.wrongTries ? ` (less after ${c.wrongTries} wrong ${c.wrongTries === 1 ? 'try' : 'tries'})` : '';
-    log(w, `${c.emoji} ${c.name} bought a ${potion}. +${pay}${tip ? ' +1 tip' : ''} 🪙${extra}`, 'sale');
+    log(w, `${c.emoji} ${c.name} bought a ${potionName(potion)}. +${pay}${tip ? ' +1 tip' : ''} 🪙${extra}`, 'sale');
     if (w.queue[0]) w.queue[0].atCounterSince = w.time;
     return true;
   }
@@ -284,9 +286,9 @@ function handOver(w: World, c: Customer, potion: PotionId): boolean {
     ? 'Check what they want with `order()` before brewing.'
     : 'Not every customer wants the same thing. The Spellbook page "Choices" teaches your apprentice to read orders.';
   if (c.wrongTries === 1) {
-    log(w, `${c.emoji} ${c.name} wanted a ${c.wants}, not a ${potion}. They'll pay less now. ${hint}`, 'warn');
+    log(w, `${c.emoji} ${c.name} wanted a ${potionName(c.wants)}, not a ${potionName(potion)}. They'll pay less now. ${hint}`, 'warn');
   } else {
-    log(w, `${c.emoji} ${c.name} turned away another ${potion}. They still want a ${c.wants}.`, 'warn');
+    log(w, `${c.emoji} ${c.name} turned away another ${potionName(potion)}. They still want a ${potionName(c.wants)}.`, 'warn');
   }
   return false;
 }
@@ -364,6 +366,18 @@ export function buy(w: World, id: ShopItemId): boolean {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Potions cross the code boundary as `{"potion": "health"}`; the runner shows them as `Potion.health`. */
+export function potionJson(id: PotionId): Json {
+  return { potion: id };
+}
+
+function asPotion(v: Json): PotionId | undefined {
+  if (v && typeof v === 'object' && !Array.isArray(v) && typeof v.potion === 'string' && v.potion in POTIONS) {
+    return v.potion as PotionId;
+  }
+  return undefined;
+}
 
 function earn(w: World, coins: number) {
   w.coins += coins;
