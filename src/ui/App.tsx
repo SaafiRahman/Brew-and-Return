@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { useWorld, type Controller } from '../app/controller';
 import { knownPotions, POTIONS, SHOP } from '../game/content';
 import { itemCost } from '../game/world';
-import type { LedgerEntry } from '../game/types';
+import type { LedgerEntry, Receipt } from '../game/types';
 import { CodeEditor } from './CodeEditor';
 import { Rich } from './Rich';
 import { ShopScene } from './ShopScene';
@@ -149,11 +149,31 @@ function Entry({ e }: { e: LedgerEntry }) {
   return (
     <div class={`msg tone-${e.tone}`}>
       <Rich text={e.text} />
+      {e.receipt && <ReceiptLine r={e.receipt} />}
       {e.detail && (
         <details>
           <summary>Show the raw error</summary>
           <pre>{e.detail}</pre>
         </details>
+      )}
+    </div>
+  );
+}
+
+/** The receipt for one delivery: what order() said, what was handed over, and (if wrong) what would have worked. */
+function ReceiptLine({ r }: { r: Receipt }) {
+  return (
+    <div class={`receipt ${r.ok ? 'ok' : 'wrong'}`}>
+      <span>
+        order() → <code>{r.asked}</code>
+      </span>
+      <span>
+        gave <code>{r.gave}</code> {r.ok ? '✓' : '✗'}
+      </span>
+      {!r.ok && (
+        <span>
+          needed <code>{r.expected}</code>
+        </span>
       )}
     </div>
   );

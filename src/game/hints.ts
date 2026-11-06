@@ -9,7 +9,7 @@ export interface ErrorInfo {
   line?: number;
 }
 
-const POTION_IDS = ['health', 'mana'];
+const POTION_IDS = ['health', 'mana', 'cooling', 'sleep'];
 const COMMANDS = ['brew', 'serve', 'order'];
 
 const onLine = (line?: number) => (line ? ` on line ${line}` : '');
@@ -51,6 +51,9 @@ export function explainError(err: ErrorInfo): string {
     }
     if (/can only concatenate str|unsupported operand type/.test(message)) {
       return `Your apprentice tried to mix words and numbers${onLine(line)}. They don't stir together!`;
+    }
+    if (/'Potion' object is not iterable/.test(message)) {
+      return `\`for\` can only go through a list${onLine(line)}, and only knights order a list. Check \`isinstance(wanted, list)\` first.`;
     }
     if (/'(\w+)' object is not callable/.test(message)) {
       return `Something that isn't a command got called like one${onLine(line)}. Check for extra brackets \`()\`.`;

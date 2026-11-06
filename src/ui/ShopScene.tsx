@@ -1,6 +1,6 @@
-import { POTIONS, potionCode, potionName, SHOP, WALK_TIME } from '../game/content';
-import { itemCost } from '../game/world';
-import type { Customer, PageId, PotionId } from '../game/types';
+import { ailment, knownAilments, POTIONS, potionCode, potionName, SHOP, WALK_TIME } from '../game/content';
+import { describeOrder, itemCost, orderCode } from '../game/world';
+import type { Customer, PageId, PotionId, World } from '../game/types';
 import { useWorld, type Controller } from '../app/controller';
 
 export function ShopScene({ ctl }: { ctl: Controller }) {
@@ -21,7 +21,7 @@ export function ShopScene({ ctl }: { ctl: Controller }) {
             <span>📜</span>
           </div>
           <div class={`sign-board ${w.open ? 'is-open' : ''}`}>{w.open ? 'Open' : 'Closed'}</div>
-          <div class="tally" title="Customers served · potions turned away · customers who gave up">
+          <div class="tally" title="Customers served · deliveries turned away · customers who gave up">
             ✅ {w.stats.served} · 🔁 {w.stats.rejected} · 🚪 {w.stats.leftUnhappy}
           </div>
         </div>
@@ -40,9 +40,11 @@ export function ShopScene({ ctl }: { ctl: Controller }) {
             aria-label={`Your apprentice is ${a.activity}`}
           >
             {a.says && <div class="speech">{a.says}</div>}
-            {a.holding && (
-              <div class="held">
-                <Potion id={a.holding} size={24} />
+            {a.holding.length > 0 && (
+              <div class={`held ${a.holding.length > 1 ? 'basket' : ''}`}>
+                {a.holding.map((p, i) => (
+                  <Potion key={i} id={p} size={a.holding.length > 1 ? 18 : 24} />
+                ))}
               </div>
             )}
             <span class="apprentice-emoji">🧙</span>
@@ -52,9 +54,13 @@ export function ShopScene({ ctl }: { ctl: Controller }) {
 
           <div class="queue" aria-label={`${waiting.length} more customers waiting in line`}>
             {waiting.map((c) => (
-              <div class="customer waiting" key={c.id} title={`${c.name} wants a ${potionName(c.wants)}`}>
+              <div class="customer waiting" key={c.id} title={`${c.name} wants ${describeOrder(c)}`}>
                 <span class="mini-want">
-                  <Potion id={c.wants} size={11} />
+                  {c.ailment ? (
+                    <span class="mini-ailment">{ailment(c.ailment)?.emoji}</span>
+                  ) : (
+                    c.wants.map((p, i) => <Potion key={i} id={p} size={11} />)
+                  )}
                 </span>
                 <span class="customer-emoji">{c.emoji}</span>
               </div>
@@ -63,6 +69,7 @@ export function ShopScene({ ctl }: { ctl: Controller }) {
         </div>
       </div>
 
+      <Chalkboard w={w} />
       <ShopPanel ctl={ctl} />
     </section>
   );
@@ -73,9 +80,8 @@ function FrontCustomer({ c }: { c: Customer }) {
   const mood = pct > 50 ? 'calm' : pct > 20 ? 'uneasy' : 'cross';
   return (
     <div class="front-customer" key={c.id}>
-      <div class={`want ${c.wrongTries ? 'shake' : ''}`} key={`${c.id}-${c.wrongTries}`}>
-        <Potion id={c.wants} size={20} />
-        <span title={potionCode(c.wants)}>{potionName(c.wants)}</span>
+      <div class={`want ${c.wrongTries ? 'shake' : ''}`} key={`${c.id}-${c.wrongTries}`} title={`order() gives ${orderCode(c)}`}>
+        <WantBubble c={c} />
       </div>
       <span class="customer-emoji">{c.emoji}</span>
       <div class="customer-name">
@@ -85,6 +91,51 @@ function FrontCustomer({ c }: { c: Customer }) {
       <div class={`patience ${mood}`} role="meter" aria-label="Patience" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
         <span style={{ width: `${pct}%` }} />
       </div>
+    </div>
+  );
+}
+
+function WantBubble({ c }: { c: Customer }) {
+  if (c.ailment) {
+    return (
+      <>
+        <span class="ailment-emoji" aria-hidden="true">
+          {ailment(c.ailment)?.emoji}
+        </span>
+        <span>My patient has a {c.ailment}</span>
+      </>
+    );
+  }
+  if (c.wants.length > 1) {
+    return (
+      <>
+        {c.wants.map((p, i) => (
+          <Potion key={i} id={p} size={18} />
+        ))}
+        <span>{c.wants.length} potions, please</span>
+      </>
+    );
+  }
+  return (
+    <>
+      <Potion id={c.wants[0]} size={20} />
+      <span>{potionName(c.wants[0])}</span>
+    </>
+  );
+}
+
+/** Which potion cures which ailment. Appears once the Healer's Chalkboard is bought. */
+function Chalkboard({ w }: { w: World }) {
+  const ailments = knownAilments(w);
+  if (!ailments.length) return null;
+  return (
+    <div class="chalkboard" aria-label="Chalkboard: which potion cures which ailment">
+      <span class="chalk-title">Cures</span>
+      {ailments.map((a) => (
+        <span class="chalk-row" key={a.name}>
+          <span aria-hidden="true">{a.emoji}</span> "{a.name}" → <code>{potionCode(a.cure)}</code>
+        </span>
+      ))}
     </div>
   );
 }
@@ -117,14 +168,22 @@ function Cauldron({ brewing, color }: { brewing: boolean; color?: string }) {
   );
 }
 
+const LEVELS: Partial<Record<string, (w: World) => number>> = {
+  cauldron: (w) => w.cauldronLevel,
+  tipjar: (w) => w.tipJarLevel,
+};
+
 function ShopPanel({ ctl }: { ctl: Controller }) {
   const w = useWorld(ctl);
-  const items = SHOP.filter((i) => i.visible(w));
+  const visible = SHOP.filter((i) => i.visible(w));
+  // Things you can still buy first; what you already own drops to the bottom, smaller.
+  const items = [...visible.filter((i) => itemCost(w, i.id) !== undefined), ...visible.filter((i) => itemCost(w, i.id) === undefined)];
   return (
     <div class="shop-panel" aria-label="Shop">
       {items.map((item) => {
         const cost = itemCost(w, item.id);
         const owned = cost === undefined;
+        const level = LEVELS[item.id]?.(w);
         return (
           <div class={`shop-item ${owned ? 'owned' : ''}`} key={item.id}>
             <span class="shop-emoji" aria-hidden="true">
@@ -133,9 +192,9 @@ function ShopPanel({ ctl }: { ctl: Controller }) {
             <div class="shop-text">
               <div class="shop-title">
                 {item.title}
-                {item.id === 'cauldron' && <span class="level">Lv {w.cauldronLevel}</span>}
+                {level !== undefined && <span class="level">Lv {level}</span>}
               </div>
-              <div class="shop-blurb">{item.blurb}</div>
+              {!owned && <div class="shop-blurb">{item.blurb}</div>}
             </div>
             {owned ? (
               item.id.startsWith('page:') ? (
@@ -143,7 +202,7 @@ function ShopPanel({ ctl }: { ctl: Controller }) {
                   Read
                 </button>
               ) : (
-                <span class="owned-tag">{item.id === 'cauldron' ? 'Max level' : 'Learned'}</span>
+                <span class="owned-tag">{level !== undefined ? 'Max level' : 'Owned'}</span>
               )
             ) : (
               <button class="btn small buy" disabled={w.coins < cost} onClick={() => ctl.buy(item.id)}>

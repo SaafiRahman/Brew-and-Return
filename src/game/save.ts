@@ -2,7 +2,7 @@ import { createWorld } from './world';
 import type { World } from './types';
 
 export const SAVE_KEY = 'brew-and-return/save';
-export const CURRENT_VERSION = 3;
+export const CURRENT_VERSION = 4;
 
 /** Minimal storage interface so saves can be tested without a browser. */
 export interface KeyValueStore {
@@ -31,6 +31,13 @@ const MIGRATIONS: Record<number, (old: any) => any> = {
       apprentice: { ...old.apprentice, holding: id(old.apprentice?.holding) ?? null },
     };
   },
+  // v4: customer kinds (healers, knights) and the basket: a customer wants a list of potions, the apprentice holds a list.
+  3: (old) => ({
+    ...old,
+    version: 4,
+    queue: (old.queue ?? []).map((c: any) => ({ ...c, kind: c.wants === 'mana' ? 'wizard' : 'villager', wants: [c.wants] })),
+    apprentice: { ...old.apprentice, holding: old.apprentice?.holding ? [old.apprentice.holding] : [] },
+  }),
 };
 
 export function serialize(w: World): string {

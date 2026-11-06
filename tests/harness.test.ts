@@ -3,7 +3,8 @@ import { loadPyodide, type PyodideInterface } from 'pyodide';
 import { beforeAll, describe, expect, it } from 'vitest';
 import pkg from 'pyodide/package.json';
 import { PYODIDE_VERSION } from '../src/runner/config';
-import { advance, beginAction, buy, createWorld, openShop } from '../src/game/world';
+import { PAGES } from '../src/game/content';
+import { addCustomer, advance, beginAction, buy, createWorld, openShop } from '../src/game/world';
 import type { World } from '../src/game/types';
 
 /**
@@ -122,6 +123,50 @@ describe('python harness', () => {
   it('order() returns a Potion you can compare and print', () => {
     run(spell('wanted = order()', 'print(wanted, wanted == Potion.health, wanted == Potion.mana)'));
     expect(world.ledger.at(-1)!.text).toContain('Potion.health True False');
+  });
+
+  it('healers: order() gives the ailment as a string', () => {
+    run(spell('wanted = order()', 'print(wanted, type(wanted).__name__, wanted == "fever")'), {
+      setup: (w) => {
+        w.queue = [];
+        w.owned.push('recipe:mana', 'recipe:healer');
+        addCustomer(w, 'healer', { ailment: 'fever' });
+      },
+    });
+    expect(world.ledger.at(-1)!.text).toContain('fever str True');
+  });
+
+  it('knights: order() gives a list you can loop over, check and even look up', () => {
+    run(spell('wanted = order()', 'book = {"fever": Potion.cooling}', 'print(wanted, isinstance(wanted, list), wanted in book, len(wanted))'), {
+      setup: (w) => {
+        w.queue = [];
+        w.owned.push('recipe:mana', 'contract:knight');
+        addCustomer(w, 'knight', { wants: ['health', 'mana'] });
+      },
+    });
+    expect(world.ledger.at(-1)!.text).toContain('[Potion.health, Potion.mana] True False 2');
+  });
+
+  it('looping over a single potion explains lists', () => {
+    const out = run(spell('for p in order():', '    brew(p)'));
+    expect(out).toMatchObject({ errorType: 'TypeError', line: 1 });
+    expect(out.message).toMatch(/'Potion' object is not iterable/);
+  });
+
+  it('the Lists & Loops spell serves villagers, wizards, healers and knights', () => {
+    const out = run(PAGES.loops.example + '\n', {
+      limit: 300,
+      setup: (w) => {
+        w.coins = 1000;
+        for (const id of ['page:repeat', 'recipe:mana', 'page:choices', 'recipe:healer', 'page:remedies', 'almanac', 'page:recipes', 'contract:knight', 'page:loops'] as const) buy(w, id);
+      },
+    });
+    expect(out.kind).toBe('stopped');
+    expect(world.stats.rejected).toBe(0);
+    expect(world.stats.knightsServed).toBeGreaterThan(0);
+    const kinds = new Set(world.ledger.filter((e) => e.receipt).map((e) => e.receipt!.asked[0]));
+    expect([...kinds].sort()).toEqual(['"', 'P', '[']);
+    expect(features).toEqual(['dict', 'for', 'if', 'variable', 'while']);
   });
 
   it('print() makes the apprentice talk', () => {

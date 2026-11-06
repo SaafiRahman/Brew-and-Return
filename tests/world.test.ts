@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { PATIENCE, POTIONS, STARTER_CODE } from '../src/game/content';
+import { HEALER_FEE, KNIGHT_BONUS, PATIENCE, POTIONS, STARTER_CODE } from '../src/game/content';
 import { explainError, similar } from '../src/game/hints';
 import { addCustomer, advance, applyDiscoveries, beginAction, buy, closeShop, createWorld, openShop } from '../src/game/world';
 import type { Json, World } from '../src/game/types';
 
 /** Potions as the runner sends them (Potion.health in Python). */
-const P = { health: { potion: 'health' }, mana: { potion: 'mana' } } as const;
+const P = { health: { potion: 'health' }, mana: { potion: 'mana' }, cooling: { potion: 'cooling' }, sleep: { potion: 'sleep' } } as const;
+
+const CURES: Record<string, Json> = {
+  fever: P.cooling,
+  sunburn: P.cooling,
+  sleepless: P.sleep,
+  nightmares: P.sleep,
+  'scraped knee': P.health,
+  bruise: P.health,
+};
 
 const DT = 0.05;
 
@@ -44,7 +53,7 @@ describe('a new shop', () => {
     const w = createWorld(1);
     expect(w.open).toBe(false);
     expect(w.queue).toHaveLength(1);
-    expect(w.queue[0].wants).toBe('health');
+    expect(w.queue[0].wants).toEqual(['health']);
     expect(w.code).toBe(STARTER_CODE);
   });
 
@@ -58,7 +67,7 @@ describe('a new shop', () => {
   it('the starter spell earns the first coins within seconds, with a quick-service tip', () => {
     const w = running();
     act(w, 'brew', P.health);
-    expect(w.apprentice.holding).toBe('health');
+    expect(w.apprentice.holding).toEqual(['health']);
     expect(act(w, 'serve')).toBe(true);
     expect(w.coins).toBe(POTIONS.health.price + 1);
     expect(w.time).toBeLessThan(5);
@@ -88,7 +97,7 @@ describe('actions', () => {
     const w = running();
     act(w, 'brew', P.health);
     expect(act(w, 'brew', P.health)).toBe(false);
-    expect(w.apprentice.holding).toBe('health');
+    expect(w.apprentice.holding).toEqual(['health']);
   });
 
   it('serving with empty hands is a shrug, not an error', () => {
@@ -138,12 +147,12 @@ describe('customers', () => {
     buy(Object.assign(w, { coins: 100 }), 'page:repeat');
     buy(w, 'recipe:mana');
     w.queue = [];
-    addCustomer(w, 'mana');
+    addCustomer(w, 'wizard');
     const coins = w.coins;
     act(w, 'brew', P.health);
     expect(act(w, 'serve')).toBe(false);
     expect(w.queue[0].wrongTries).toBe(1);
-    expect(w.apprentice.holding).toBeNull(); // the rejected potion is wasted
+    expect(w.apprentice.holding).toEqual([]); // the rejected potion is wasted
     act(w, 'brew', P.mana);
     expect(act(w, 'serve')).toBe(true);
     expect(w.coins - coins).toBe(POTIONS.mana.price / 2);
@@ -169,10 +178,124 @@ describe('customers', () => {
   it('only want mana potions once the recipe is known', () => {
     const w = running(7);
     for (let i = 0; i < 30; i++) addCustomer(w);
-    expect(w.queue.every((c) => c.wants === 'health')).toBe(true);
+    expect(w.queue.every((c) => c.kind === 'villager')).toBe(true);
     w.owned.push('recipe:mana');
     for (let i = 0; i < 30; i++) addCustomer(w);
-    expect(w.queue.some((c) => c.wants === 'mana')).toBe(true);
+    expect(w.queue.some((c) => c.wants[0] === 'mana')).toBe(true);
+  });
+});
+
+/** A world that owns everything up to (and including) `upTo` in the shop order. */
+function owning(upTo: string, seed = 1): World {
+  const w = running(seed);
+  w.coins = 1000;
+  for (const id of ['page:repeat', 'recipe:mana', 'page:choices', 'recipe:healer', 'page:remedies', 'almanac', 'page:recipes', 'contract:knight', 'page:loops'] as const) {
+    expect(buy(w, id)).toBe(true);
+    if (id === upTo) break;
+  }
+  w.queue = [];
+  w.spawnTimer = 1e9;
+  return w;
+}
+
+describe('healers', () => {
+  it('only visit once the chalkboard is bought, and only with ailments it lists', () => {
+    const w = owning('page:choices', 9);
+    for (let i = 0; i < 40; i++) addCustomer(w);
+    expect(w.queue.some((c) => c.kind === 'healer')).toBe(false);
+    buy(w, 'recipe:healer');
+    w.queue = [];
+    for (let i = 0; i < 60; i++) addCustomer(w);
+    const ailments = new Set(w.queue.filter((c) => c.kind === 'healer').map((c) => c.ailment));
+    expect([...ailments].sort()).toEqual(['fever', 'scraped knee', 'sleepless']);
+  });
+
+  it('the almanac adds three more ailments', () => {
+    const w = owning('almanac', 4);
+    for (let i = 0; i < 120; i++) addCustomer(w);
+    expect(new Set(w.queue.map((c) => c.ailment).filter(Boolean)).size).toBe(6);
+  });
+
+  it('order() gives the ailment; the right cure pays the potion plus a fee', () => {
+    const w = owning('recipe:healer');
+    addCustomer(w, 'healer', { ailment: 'fever' });
+    expect(act(w, 'order')).toBe('fever');
+    const coins = w.coins;
+    act(w, 'brew', P.cooling);
+    expect(act(w, 'serve')).toBe(true);
+    expect(w.coins - coins).toBe(POTIONS.cooling.price + HEALER_FEE + 1);
+  });
+
+  it('brewing the ailment itself is a muddle with one hint, not a crash', () => {
+    const w = owning('recipe:healer');
+    addCustomer(w, 'healer', { ailment: 'sleepless' });
+    expect(act(w, 'brew', 'sleepless')).toBe(false);
+    expect(act(w, 'brew', 'sleepless')).toBe(false);
+    const hints = w.ledger.filter((e) => e.text.includes('is what the patient has'));
+    expect(hints).toHaveLength(1);
+    expect(hints[0].text).toContain('`Potion.sleep`');
+  });
+
+  it('turning away the wrong cure points to the chalkboard', () => {
+    const w = owning('recipe:healer');
+    addCustomer(w, 'healer', { ailment: 'fever' });
+    act(w, 'brew', P.health);
+    expect(act(w, 'serve')).toBe(false);
+    const e = w.ledger.at(-1)!;
+    expect(e.text).toMatch(/fever is cured by `Potion.cooling`.*Remedies/);
+    expect(e.receipt).toMatchObject({ asked: '"fever"', gave: 'Potion.health', expected: 'Potion.cooling', ok: false });
+  });
+});
+
+describe('knights', () => {
+  it('order a list, need the basket, and pay a bonus for the whole order', () => {
+    const w = owning('contract:knight');
+    addCustomer(w, 'knight', { wants: ['health', 'mana', 'health'] });
+    expect(act(w, 'order')).toEqual([P.health, P.mana, P.health]);
+    const coins = w.coins;
+    act(w, 'brew', P.mana);
+    act(w, 'brew', P.health);
+    act(w, 'brew', P.health);
+    expect(act(w, 'brew', P.health)).toBe(false); // the basket holds 3
+    expect(act(w, 'serve')).toBe(true);
+    expect(w.coins - coins).toBe(Math.round((3 + 8 + 3) * KNIGHT_BONUS) + 1);
+    expect(w.ledger.at(-2)!.receipt).toMatchObject({ asked: '[Potion.health, Potion.mana, Potion.health]', ok: true });
+    expect(w.flags).toContain('chapter1');
+    expect(w.ledger.at(-1)!.text).toMatch(/end of the first chapter/);
+  });
+
+  it('turn away part of an order', () => {
+    const w = owning('contract:knight');
+    addCustomer(w, 'knight', { wants: ['health', 'health'] });
+    act(w, 'brew', P.health);
+    expect(act(w, 'serve')).toBe(false);
+    expect(w.ledger.at(-1)!.text).toMatch(/wanted 2 health potions, not a health potion.*Lists & Loops/);
+  });
+
+  it('brewing a whole list is a muddle with a hint, not a crash', () => {
+    const w = owning('contract:knight');
+    addCustomer(w, 'knight', { wants: ['health', 'mana'] });
+    expect(act(w, 'brew', [P.health, P.mana])).toBe(false);
+    expect(w.ledger.at(-1)!.text).toMatch(/whole list of potions/);
+  });
+
+  it('get more patience for bigger orders', () => {
+    const w = owning('contract:knight');
+    const c = addCustomer(w, 'knight', { wants: ['health', 'health', 'mana'] });
+    expect(c.maxPatience).toBe(PATIENCE + 20);
+  });
+});
+
+describe('the tip jar', () => {
+  it('makes quick tips bigger', () => {
+    const w = running();
+    w.lifetimeCoins = 100;
+    w.coins = 100;
+    expect(buy(w, 'tipjar')).toBe(true);
+    const coins = w.coins;
+    act(w, 'brew', P.health);
+    act(w, 'serve');
+    expect(w.coins - coins).toBe(POTIONS.health.price + 2);
   });
 });
 
@@ -203,6 +326,68 @@ describe('the first three minutes', () => {
     loop(w, 60, smartLoop);
     const smartRate = w.coins - mid;
     expect(smartRate).toBeGreaterThan(dumbRate * 1.5);
+  });
+});
+
+/** The spells from each Spellbook page, as the game sees them. */
+const chainLoop = (w: World) => {
+  const wanted = act(w, 'order');
+  act(w, 'brew', typeof wanted === 'string' ? (CURES[wanted] ?? P.health) : wanted);
+  act(w, 'serve');
+};
+const remediesKnowsThree = (w: World) => {
+  const wanted = act(w, 'order');
+  const three: Record<string, Json> = { fever: P.cooling, sleepless: P.sleep, 'scraped knee': P.health };
+  act(w, 'brew', typeof wanted === 'string' ? (three[wanted] ?? wanted) : wanted);
+  act(w, 'serve');
+};
+const fullLoop = (w: World) => {
+  const wanted = act(w, 'order');
+  if (Array.isArray(wanted)) for (const p of wanted) act(w, 'brew', p);
+  else act(w, 'brew', typeof wanted === 'string' ? CURES[wanted] : wanted);
+  act(w, 'serve');
+};
+
+/** Loop until we can afford `id`, then buy it. Returns the game seconds it took. */
+function earnAndBuy(w: World, id: Parameters<typeof buy>[1], body: (w: World) => void, limit = 300): number {
+  const t0 = w.time;
+  while (!buy(w, id)) {
+    body(w);
+    if (w.time - t0 > limit) throw new Error(`couldn't afford ${id} in ${limit}s (have ${w.coins})`);
+  }
+  return w.time - t0;
+}
+
+describe('the first chapter (about ten minutes)', () => {
+  it("each purchase is affordable with the previous page's spell, and the final spell serves everyone", () => {
+    const w = createWorld(11);
+    for (let i = 0; i < 3; i++) {
+      openShop(w);
+      healthLoop(w);
+      closeShop(w);
+    }
+    expect(buy(w, 'page:repeat')).toBe(true);
+    openShop(w);
+    const spent: Record<string, number> = {};
+    spent.mana = earnAndBuy(w, 'recipe:mana', healthLoop);
+    spent.choices = earnAndBuy(w, 'page:choices', healthLoop);
+    spent.healer = earnAndBuy(w, 'recipe:healer', smartLoop);
+    // Healers get the wrong thing from the old spell, but the shop still earns.
+    spent.remedies = earnAndBuy(w, 'page:remedies', smartLoop);
+    spent.almanac = earnAndBuy(w, 'almanac', remediesKnowsThree);
+    spent.recipes = earnAndBuy(w, 'page:recipes', remediesKnowsThree);
+    spent.knight = earnAndBuy(w, 'contract:knight', chainLoop);
+    spent.loops = earnAndBuy(w, 'page:loops', chainLoop);
+    const total = Object.values(spent).reduce((a, b) => a + b, 0);
+    // Game time spent earning: a few minutes, plus however long the player spends writing code.
+    expect(total, JSON.stringify(spent)).toBeGreaterThan(120);
+    expect(total, JSON.stringify(spent)).toBeLessThan(480);
+
+    const before = { ...w.stats };
+    loop(w, 120, fullLoop);
+    expect(w.stats.rejected).toBe(before.rejected);
+    expect(w.stats.knightsServed).toBeGreaterThan(3);
+    expect(w.flags).toContain('chapter1');
   });
 });
 

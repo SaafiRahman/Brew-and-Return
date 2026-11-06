@@ -64,8 +64,8 @@ export interface SpellVocabulary {
 
 const COMMANDS: Completion[] = [
   { label: 'brew', type: 'function', detail: '(potion)', info: 'Walk to the cauldron and brew a potion, like brew(Potion.health).' },
-  { label: 'serve', type: 'function', detail: '()', info: "Walk to the counter and hand over the potion you're holding." },
-  { label: 'order', type: 'function', detail: '()', info: 'Find out which potion the customer at the counter wants.' },
+  { label: 'serve', type: 'function', detail: '()', info: "Walk to the counter and hand over every potion you're holding." },
+  { label: 'order', type: 'function', detail: '()', info: 'Find out what the customer at the counter wants.' },
   { label: 'Potion', type: 'class', info: 'Every potion you know. Type a dot after it to see them.' },
   { label: 'print', type: 'function', detail: '(…)', info: 'Your apprentice says something out loud.' },
 ];

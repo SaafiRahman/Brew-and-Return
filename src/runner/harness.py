@@ -48,7 +48,21 @@ class _PotionKind:
         raise ShopError("Potions can't be changed.")
 
 
-POTION_IDS = ["health", "mana"]
+# Shown as `Potion` in error messages like "'Potion' object is not iterable".
+_PotionKind.__name__ = _PotionKind.__qualname__ = "Potion"
+
+
+class _PotionOrder(list):
+    """A knight's order: a normal list of potions that can also be looked up in a dict (it's just not in it)."""
+
+    def __hash__(self):
+        return hash(tuple(self))
+
+
+_PotionOrder.__name__ = _PotionOrder.__qualname__ = "list"
+
+
+POTION_IDS = ["health", "mana", "cooling", "sleep"]
 
 
 class _PotionList:
@@ -92,7 +106,7 @@ def _from_wire(value):
     if isinstance(value, dict) and set(value) == {"potion"}:
         return getattr(Potion, value["potion"])
     if isinstance(value, list):
-        return [_from_wire(v) for v in value]
+        return _PotionOrder(_from_wire(v) for v in value)
     return value
 
 
